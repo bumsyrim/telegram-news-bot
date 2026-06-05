@@ -7,6 +7,12 @@
       "url": "https://brunch.co.kr/@sungdairi",
       "type": "brunch",
       "tag": "AI"
+    },
+    {
+      "name": "지피터스 AI뉴스",
+      "url": "https://www.gpters.org/news",
+      "type": "gpters",
+      "tag": "AI"
     }
   ]
 }

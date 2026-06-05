@@ -8,15 +8,12 @@ import time
 import logging
 import schedule
 from pathlib import Path
-from datetime import datetime
 
 import anthropic
 import requests
 
 from sources.brunch import BrunchSource
-# 나중에 추가할 소스들:
-# from sources.rss import RssSource
-# from sources.naver_blog import NaverBlogSource
+from sources.gpters import GptersSource
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,6 +56,8 @@ def _build_sources() -> list:
         tag = s.get("tag") or _auto_tag(s["name"])
         if s.get("type") == "brunch":
             sources.append(BrunchSource(url=s["url"], name=s["name"], tag=tag))
+        elif s.get("type") == "gpters":
+            sources.append(GptersSource(url=s["url"], name=s["name"], tag=tag))
     return sources or [BrunchSource(url="https://brunch.co.kr/@sungdairi", name="브런치 AI Weekly", tag="AI")]
 
 
@@ -137,14 +136,18 @@ def send_telegram(text: str):
     log.info("텔레그램 발송 완료 (%d명 중 %d명 성공)", len(subscribers), len(subscribers) - failed)
 
 
-def format_message(title: str, summary: str, url: str, source_name: str, tag: str = "") -> str:
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    tag_prefix = f"[{tag}] " if tag else ""
-    return (
-        f"{tag_prefix}📰 <b>{title}</b>\n"
-        f"🔗 <a href='{url}'>원문 보기</a>\n"
-        f"<i>출처: {source_name} | {now}</i>"
-    )
+def format_message(title: str, content: str, url: str, tag: str = "") -> str:
+    lines = []
+    if tag:
+        lines.append(f"<b>[{tag}]</b>")
+    lines.append(title)
+    if content:
+        preview = content[:200].strip()
+        if len(content) > 200:
+            preview += "..."
+        lines += ["", f"- {preview}"]
+    lines += ["", f"- 🔗 <a href='{url}'>원문 보기</a>"]
+    return "\n".join(lines)
 
 # ── 메인 체크 루프 ─────────────────────────────────────
 def check_and_send():
@@ -164,7 +167,7 @@ def check_and_send():
                 log.info(f"새 글 발견: {article['title']}")
 
                 message = format_message(
-                    article["title"], "", article["url"], source.name, source.tag
+                    article["title"], article.get("content", ""), article["url"], source.tag
                 )
                 send_telegram(message)
 
