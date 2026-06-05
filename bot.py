@@ -37,6 +37,26 @@ from config import (
 )
 
 SEEN_FILE = Path("seen.json")
+SOURCES_FILE = Path("sources.json")
+
+
+# ── sources.json 로드 ──────────────────────────────────
+def _build_sources() -> list:
+    if not SOURCES_FILE.exists():
+        return [BrunchSource(url="https://brunch.co.kr/@sungdairi", name="브런치 AI Weekly")]
+    data = json.loads(SOURCES_FILE.read_text(encoding="utf-8"))
+    sources = []
+    for s in data.get("sources", []):
+        if s.get("type") == "brunch":
+            sources.append(BrunchSource(url=s["url"], name=s["name"]))
+    return sources or [BrunchSource(url="https://brunch.co.kr/@sungdairi", name="브런치 AI Weekly")]
+
+
+def _get_interval() -> int:
+    if not SOURCES_FILE.exists():
+        return CHECK_INTERVAL_MINUTES
+    data = json.loads(SOURCES_FILE.read_text(encoding="utf-8"))
+    return data.get("interval_minutes", CHECK_INTERVAL_MINUTES)
 
 
 # ── 상태 저장 ─────────────────────────────────────────
@@ -98,17 +118,12 @@ def format_message(title: str, summary: str, url: str, source_name: str) -> str:
     )
 
 # ── 메인 체크 루프 ─────────────────────────────────────
-SOURCES = [
-    BrunchSource(
-        url="https://brunch.co.kr/@sungdairi",
-        name="브런치 AI Weekly",
-    ),
-]
 def check_and_send():
     seen = load_seen()
-    log.info(f"새 글 확인 중... (이미 발송된 글: {len(seen)}개)")
+    sources = _build_sources()
+    log.info(f"새 글 확인 중... (등록 사이트: {len(sources)}개 / 이미 발송된 글: {len(seen)}개)")
 
-    for source in SOURCES:
+    for source in sources:
         try:
             articles = source.fetch()
             log.info(f"[{source.name}] 글 {len(articles)}개 발견")
@@ -134,11 +149,12 @@ def check_and_send():
 
 # ── 실행 ──────────────────────────────────────────────
 if __name__ == "__main__":
-    log.info(f"봇 시작! {CHECK_INTERVAL_MINUTES}분마다 확인합니다.")
+    interval = _get_interval()
+    log.info(f"봇 시작! {interval}분마다 확인합니다.")
     check_and_send()
 
     if "--once" not in sys.argv:
-        schedule.every(CHECK_INTERVAL_MINUTES).minutes.do(check_and_send)
+        schedule.every(interval).minutes.do(check_and_send)
         while True:
             schedule.run_pending()
             time.sleep(30)

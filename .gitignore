@@ -1,6 +1,7 @@
 .env
 seen.json
 bot.log
+commands.log
 __pycache__/
 *.pyc
 .wdm/

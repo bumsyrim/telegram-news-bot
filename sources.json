@@ -1,0 +1,10 @@
+{
+  "interval_minutes": 60,
+  "sources": [
+    {
+      "name": "브런치 AI Weekly",
+      "url": "https://brunch.co.kr/@sungdairi",
+      "type": "brunch"
+    }
+  ]
+}
