@@ -105,18 +105,21 @@ def _pm_grade(value: int, kind: str) -> str:
 # ── API 호출 ───────────────────────────────────────────────────────
 
 def fetch_weather(nx: int, ny: int, api_key: str) -> dict:
-    """기상청 단기예보 API"""
-    now = datetime.now(KST)
-    hour = now.hour
-    base_times = [2, 5, 8, 11, 14, 17, 20, 23]
-    available = [t for t in base_times if t <= hour]
+    """기상청 단기예보 API.
 
-    if not available:
-        base_date = (now - timedelta(days=1)).strftime("%Y%m%d")
-        base_time = "2300"
+    TMN(최저기온)·TMX(최고기온)는 0200 발표 시각에서만 제공됨.
+    - 오전 7시 이전: 전날 0200 발표 데이터 (전날 최저·최고기온)
+    - 오전 7시 이후: 당일 0200 발표 데이터 (당일 최저·최고기온)
+    """
+    now = datetime.now(KST)
+
+    # 7시 이전이면 전날 기준
+    if now.hour < 7:
+        target = now - timedelta(days=1)
     else:
-        base_date = now.strftime("%Y%m%d")
-        base_time = f"{max(available):02d}00"
+        target = now
+
+    target_date = target.strftime("%Y%m%d")
 
     url = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
     params = {
@@ -124,8 +127,8 @@ def fetch_weather(nx: int, ny: int, api_key: str) -> dict:
         "pageNo": 1,
         "numOfRows": 1000,
         "dataType": "JSON",
-        "base_date": base_date,
-        "base_time": base_time,
+        "base_date": target_date,
+        "base_time": "0200",  # TMN·TMX가 포함되는 유일한 발표 시각
         "nx": nx,
         "ny": ny,
     }
@@ -133,11 +136,10 @@ def fetch_weather(nx: int, ny: int, api_key: str) -> dict:
     resp.raise_for_status()
     items = resp.json()["response"]["body"]["items"]["item"]
 
-    today = now.strftime("%Y%m%d")
     result: dict = {"pop": 0}
 
     for item in items:
-        if item["fcstDate"] != today:
+        if item["fcstDate"] != target_date:
             continue
         cat, val, fcst_time = item["category"], item["fcstValue"], item["fcstTime"]
 
@@ -152,6 +154,7 @@ def fetch_weather(nx: int, ny: int, api_key: str) -> dict:
         elif cat == "PTY" and fcst_time == "1200":
             result["pty"] = val
 
+    log.debug("날씨 파싱 결과 (base=%s 0200): %s", target_date, result)
     return result
 
 
