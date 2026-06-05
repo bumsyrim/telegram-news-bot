@@ -23,7 +23,7 @@ USERS_FILE = Path("users.json")
 # 누구나 사용 가능한 명령어 (NFC 정규화된 소문자로 저장)
 PUBLIC_COMMANDS = {
     unicodedata.normalize("NFC", c)
-    for c in {"/start", "/stop", "/날씨", "/weather", "/location", "/코스피", "/kospi"}
+    for c in {"/start", "/stop", "/날씨", "/weather", "/location", "/코스피", "/kospi", "/금융", "/finance"}
 }
 
 log = logging.getLogger(__name__)
@@ -35,6 +35,7 @@ HELP_TEXT = (
     "/날씨 (또는 /weather) - 내 위치 기준 날씨/미세먼지 조회\n"
     "/location 위치명 - 내 날씨 위치 변경\n"
     "/코스피 (또는 /kospi) - 코스피 지수 실시간 조회\n"
+    "/금융 (또는 /finance) - 미국 시장 지표 즉시 조회\n"
     "/list - 등록된 사이트 목록\n"
     "/add URL 이름 - 사이트 추가\n"
     "/remove 이름 - 사이트 삭제\n"
@@ -183,6 +184,23 @@ def handle_weather_query(chat_id: int):
 
     msg = format_weather_message(loc["display"], weather, air)
     send_message(chat_id, msg)
+
+
+def handle_finance_query(chat_id: int):
+    from market import fetch_market_data, format_market_message
+
+    send_message(chat_id, "🔍 시장 데이터 조회 중...")
+    try:
+        data, futures_error = fetch_market_data()
+        if futures_error:
+            send_message(chat_id, "⚠️ 야간선물 데이터를 가져올 수 없습니다. 나머지 항목만 표시합니다.")
+        if not data:
+            send_message(chat_id, "❌ 시장 데이터를 가져올 수 없습니다. 잠시 후 다시 시도해주세요.")
+            return
+        send_message(chat_id, format_market_message(data))
+    except Exception as e:
+        log.error("금융 조회 실패: %s", e, exc_info=True)
+        send_message(chat_id, "❌ 시장 데이터를 가져올 수 없습니다. 잠시 후 다시 시도해주세요.")
 
 
 def handle_kospi_query(chat_id: int):
@@ -357,6 +375,8 @@ def dispatch(chat_id: int, text: str, username: str = ""):
         N("/location"): lambda: handle_location(chat_id, args),
         N("/코스피"):   lambda: handle_kospi_query(chat_id),
         N("/kospi"):    lambda: handle_kospi_query(chat_id),
+        N("/금융"):     lambda: handle_finance_query(chat_id),
+        N("/finance"):  lambda: handle_finance_query(chat_id),
         N("/help"):     lambda: send_message(chat_id, HELP_TEXT),
     }
     admin_handlers = {
