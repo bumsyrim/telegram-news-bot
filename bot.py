@@ -38,6 +38,7 @@ from config import (
 
 SEEN_FILE = Path("seen.json")
 SOURCES_FILE = Path("sources.json")
+USERS_FILE = Path("users.json")
 
 
 # ── sources.json 로드 ──────────────────────────────────
@@ -93,20 +94,36 @@ def summarize(title: str, content: str, url: str) -> str:
 
 
 # ── 텔레그램 발송 ──────────────────────────────────────
+def _load_subscribers() -> list:
+    if USERS_FILE.exists():
+        data = json.loads(USERS_FILE.read_text(encoding="utf-8"))
+        subs = data.get("subscribers", [])
+        if subs:
+            return subs
+    return [TELEGRAM_CHAT_ID]
+
+
 def send_telegram(text: str):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    resp = requests.post(
-        url,
-        json={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": False,
-        },
-        timeout=10,
-    )
-    resp.raise_for_status()
-    log.info("텔레그램 발송 완료")
+    api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    subscribers = _load_subscribers()
+    failed = 0
+    for chat_id in subscribers:
+        try:
+            resp = requests.post(
+                api_url,
+                json={
+                    "chat_id": chat_id,
+                    "text": text,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": False,
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+        except Exception as e:
+            log.warning("발송 실패 (chat_id=%s): %s", chat_id, e)
+            failed += 1
+    log.info("텔레그램 발송 완료 (%d명 중 %d명 성공)", len(subscribers), len(subscribers) - failed)
 
 
 def format_message(title: str, summary: str, url: str, source_name: str) -> str:

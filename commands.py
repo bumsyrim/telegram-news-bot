@@ -1,6 +1,7 @@
 """
 텔레그램 명령어 봇 - long-polling 방식
-/list /add /remove /interval /run
+공개: /start /stop
+관리자: /list /add /remove /interval /run
 """
 import json
 import logging
@@ -16,17 +17,44 @@ from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
 SOURCES_FILE = Path("sources.json")
 WORKFLOW_FILE = Path(".github/workflows/run_bot.yml")
+USERS_FILE = Path("users.json")
+
+# 누구나 사용 가능한 명령어
+PUBLIC_COMMANDS = {"/start", "/stop"}
 
 log = logging.getLogger(__name__)
 
 HELP_TEXT = (
     "사용 가능한 명령어:\n"
+    "/start - 뉴스 구독 등록\n"
+    "/stop - 뉴스 구독 취소\n"
     "/list - 등록된 사이트 목록\n"
     "/add URL 이름 - 사이트 추가\n"
     "/remove 이름 - 사이트 삭제\n"
     "/interval 숫자 - 실행 주기 변경 (분)\n"
     "/run - 즉시 뉴스 체크 실행"
 )
+
+ADMIN_HELP_TEXT = (
+    "관리자 명령어:\n"
+    "/list - 등록된 사이트 목록\n"
+    "/add URL 이름 - 사이트 추가\n"
+    "/remove 이름 - 사이트 삭제\n"
+    "/interval 숫자 - 실행 주기 변경 (분)\n"
+    "/run - 즉시 뉴스 체크 실행"
+)
+
+
+# ── users.json 읽기/쓰기 ─────────────────────────────────
+
+def load_users() -> dict:
+    if USERS_FILE.exists():
+        return json.loads(USERS_FILE.read_text(encoding="utf-8"))
+    return {"subscribers": []}
+
+
+def save_users(data: dict):
+    USERS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 # ── sources.json 읽기/쓰기 ────────────────────────────────
@@ -82,13 +110,41 @@ def update_workflow_cron(minutes: int) -> bool:
 
 # ── 명령어 핸들러 ─────────────────────────────────────────
 
+def handle_start(chat_id: int, username: str = ""):
+    data = load_users()
+    if chat_id in data["subscribers"]:
+        send_message(chat_id, "이미 구독 중입니다.\n/stop 으로 구독을 취소할 수 있습니다.")
+        return
+    data["subscribers"].append(chat_id)
+    save_users(data)
+    name = f"@{username}" if username else str(chat_id)
+    log.info("구독 등록: %s", name)
+    send_message(
+        chat_id,
+        f"✅ 구독이 완료되었습니다!\n새 글이 발행되면 알림을 보내드립니다.\n\n/stop 으로 구독을 취소할 수 있습니다.",
+    )
+
+
+def handle_stop(chat_id: int, username: str = ""):
+    data = load_users()
+    if chat_id not in data["subscribers"]:
+        send_message(chat_id, "구독 중이 아닙니다.\n/start 로 구독할 수 있습니다.")
+        return
+    data["subscribers"].remove(chat_id)
+    save_users(data)
+    name = f"@{username}" if username else str(chat_id)
+    log.info("구독 취소: %s", name)
+    send_message(chat_id, "구독이 취소되었습니다.\n언제든지 /start 로 다시 구독할 수 있습니다.")
+
+
 def handle_list(chat_id: int):
-    data = load_sources()
-    if not data["sources"]:
+    src = load_sources()
+    usr = load_users()
+    if not src["sources"]:
         send_message(chat_id, "등록된 사이트가 없습니다.\n/add URL 이름 으로 추가하세요.")
         return
-    lines = [f"📋 <b>등록된 사이트 목록</b> (주기: {data['interval_minutes']}분)\n"]
-    for i, s in enumerate(data["sources"], 1):
+    lines = [f"📋 <b>등록된 사이트 목록</b> (주기: {src['interval_minutes']}분 / 구독자: {len(usr['subscribers'])}명)\n"]
+    for i, s in enumerate(src["sources"], 1):
         lines.append(f"{i}. <b>{s['name']}</b>\n   {s['url']}")
     send_message(chat_id, "\n".join(lines))
 
@@ -176,32 +232,37 @@ def handle_run(chat_id: int):
 
 # ── 명령어 디스패치 ───────────────────────────────────────
 
-def dispatch(chat_id: int, text: str):
+def dispatch(chat_id: int, text: str, username: str = ""):
     parts = text.strip().split(maxsplit=1)
     cmd = parts[0].lower().split("@")[0]  # /cmd@botname 형태 처리
     args = parts[1] if len(parts) > 1 else ""
 
-    handlers = {
+    public_handlers = {
+        "/start": lambda: handle_start(chat_id, username),
+        "/stop": lambda: handle_stop(chat_id, username),
+        "/help": lambda: send_message(chat_id, HELP_TEXT),
+    }
+    admin_handlers = {
         "/list": lambda: handle_list(chat_id),
         "/add": lambda: handle_add(chat_id, args),
         "/remove": lambda: handle_remove(chat_id, args),
         "/interval": lambda: handle_interval(chat_id, args),
         "/run": lambda: handle_run(chat_id),
-        "/help": lambda: send_message(chat_id, HELP_TEXT),
-        "/start": lambda: send_message(chat_id, f"안녕하세요! 뉴스 봇입니다.\n\n{HELP_TEXT}"),
     }
 
-    handler = handlers.get(cmd)
-    if handler:
-        handler()
+    if cmd in public_handlers:
+        public_handlers[cmd]()
+    elif cmd in admin_handlers:
+        admin_handlers[cmd]()
     else:
-        send_message(chat_id, f"알 수 없는 명령어입니다.\n\n{HELP_TEXT}")
+        is_admin = str(chat_id) == str(TELEGRAM_CHAT_ID)
+        send_message(chat_id, f"알 수 없는 명령어입니다.\n\n{HELP_TEXT if is_admin else '/start 로 구독할 수 있습니다.'}")
 
 
 # ── Long-polling 루프 ─────────────────────────────────────
 
 def run_polling():
-    log.info("텔레그램 명령어 봇 시작 (허용 채팅 ID: %s)", TELEGRAM_CHAT_ID)
+    log.info("텔레그램 명령어 봇 시작 (관리자 ID: %s)", TELEGRAM_CHAT_ID)
     offset = None
     while True:
         try:
@@ -219,16 +280,23 @@ def run_polling():
                 msg = update.get("message", {})
                 chat_id = msg.get("chat", {}).get("id")
                 text = msg.get("text", "")
+                username = msg.get("from", {}).get("username", "")
 
                 if not text.startswith("/"):
                     continue
-                if str(chat_id) != str(TELEGRAM_CHAT_ID):
-                    log.warning("허용되지 않은 채팅 ID: %s", chat_id)
+
+                cmd = text.strip().split()[0].lower().split("@")[0]
+                is_admin = str(chat_id) == str(TELEGRAM_CHAT_ID)
+                is_public_cmd = cmd in PUBLIC_COMMANDS
+
+                if not is_public_cmd and not is_admin:
+                    log.warning("관리자 전용 명령어 시도: %s (chat_id=%s)", cmd, chat_id)
+                    send_message(chat_id, "❌ 관리자 전용 명령어입니다.\n/start 로 구독할 수 있습니다.")
                     continue
 
-                log.info("명령어 수신: %s", text)
+                log.info("명령어 수신: %s (from %s, admin=%s)", text, chat_id, is_admin)
                 try:
-                    dispatch(chat_id, text)
+                    dispatch(chat_id, text, username)
                 except Exception as e:
                     log.error("명령어 처리 오류: %s", e, exc_info=True)
                     send_message(chat_id, f"❌ 오류가 발생했습니다: {e}")
