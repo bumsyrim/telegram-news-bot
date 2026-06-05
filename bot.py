@@ -2,7 +2,7 @@
 텔레그램 뉴스 봇 - 메인 실행 파일
 새 글 감지 → Claude API 요약 → 텔레그램 발송
 """
-
+import sys
 import json
 import time
 import logging
@@ -135,9 +135,10 @@ def check_and_send():
 # ── 실행 ──────────────────────────────────────────────
 if __name__ == "__main__":
     log.info(f"봇 시작! {CHECK_INTERVAL_MINUTES}분마다 확인합니다.")
-    check_and_send()  # 시작 시 즉시 1회 실행
+    check_and_send()
 
-    schedule.every(CHECK_INTERVAL_MINUTES).minutes.do(check_and_send)
-    while True:
-        schedule.run_pending()
-        time.sleep(30)
+    if "--once" not in sys.argv:
+        schedule.every(CHECK_INTERVAL_MINUTES).minutes.do(check_and_send)
+        while True:
+            schedule.run_pending()
+            time.sleep(30)
