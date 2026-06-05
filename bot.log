@@ -1,0 +1,89 @@
+2026-06-04 16:44:29,707 [INFO] 봇 시작! 60분마다 확인합니다.
+2026-06-04 16:44:29,708 [INFO] 새 글 확인 중... (이미 발송된 글: 0개)
+2026-06-04 16:44:31,483 [INFO] 브런치에서 링크 0개 발견
+2026-06-04 16:44:31,486 [INFO] [브런치 AI Weekly] 글 0개 발견
+2026-06-04 16:50:48,409 [INFO] 봇 시작! 60분마다 확인합니다.
+2026-06-04 16:50:48,410 [INFO] 새 글 확인 중... (이미 발송된 글: 0개)
+2026-06-04 16:50:49,171 [ERROR] 브런치 API 호출 실패: 404 Client Error:  for url: https://brunch.co.kr/api/v4/brunchbook/the-ai-weekly
+2026-06-04 16:50:50,096 [ERROR] 브런치 RSS도 실패: 404 Client Error:  for url: https://brunch.co.kr/rss/brunchbook/the-ai-weekly
+2026-06-04 16:50:50,100 [INFO] [브런치 AI Weekly] 글 0개 발견
+2026-06-04 16:55:01,651 [INFO] 봇 시작! 60분마다 확인합니다.
+2026-06-04 16:55:01,651 [INFO] 새 글 확인 중... (이미 발송된 글: 0개)
+2026-06-04 16:55:02,359 [ERROR] 브런치 RSS 로드 실패: 404 Client Error:  for url: https://brunch.co.kr/rss/@3LDH
+2026-06-04 16:55:02,361 [INFO] [브런치 AI Weekly] 글 0개 발견
+2026-06-04 16:59:58,750 [INFO] 봇 시작! 60분마다 확인합니다.
+2026-06-04 16:59:58,751 [INFO] 새 글 확인 중... (이미 발송된 글: 0개)
+2026-06-04 16:59:59,451 [ERROR] 브런치 RSS 로드 실패: 404 Client Error:  for url: https://brunch.co.kr/rss/@sungdairi
+2026-06-04 16:59:59,453 [INFO] [브런치 AI Weekly] 글 0개 발견
+2026-06-04 17:06:30,945 [INFO] 봇 시작! 60분마다 확인합니다.
+2026-06-04 17:06:30,946 [INFO] 새 글 확인 중... (이미 발송된 글: 0개)
+2026-06-04 17:06:33,146 [INFO] 브런치 작가 페이지에서 링크 0개 발견
+2026-06-04 17:06:33,149 [INFO] [브런치 AI Weekly] 글 0개 발견
+2026-06-04 17:29:32,946 [INFO] 봇 시작! 60분마다 확인합니다.
+2026-06-04 17:29:32,948 [INFO] 새 글 확인 중... (이미 발송된 글: 0개)
+2026-06-04 17:29:32,948 [INFO] ====== WebDriver manager ======
+2026-06-04 17:29:44,677 [INFO] Get LATEST chromedriver version for google-chrome
+2026-06-04 17:29:45,578 [INFO] There is no [win64] chromedriver "148.0.7778.178" for browser google-chrome "148.0.7778" in cache
+2026-06-04 17:29:49,472 [INFO] There is no [win64] chromedriver "148.0.7778.178" for browser google-chrome "148.0.7778" in cache
+2026-06-04 17:29:49,473 [INFO] Get LATEST chromedriver version for google-chrome
+2026-06-04 17:29:51,231 [INFO] WebDriver version 148.0.7778.178 selected
+2026-06-04 17:29:51,241 [INFO] Modern chrome version https://storage.googleapis.com/chrome-for-testing-public/148.0.7778.178/win64/chromedriver-win64.zip
+2026-06-04 17:29:51,242 [INFO] About to download new driver from https://storage.googleapis.com/chrome-for-testing-public/148.0.7778.178/win64/chromedriver-win64.zip
+2026-06-04 17:29:52,050 [INFO] Driver downloading response is 200
+2026-06-04 17:29:52,804 [INFO] Driver has been saved in cache [C:\Users\SKTelecom\.wdm\drivers\chromedriver\win64\148.0.7778.178]
+2026-06-04 17:30:05,700 [INFO] 브런치에서 링크 20개 발견
+2026-06-04 17:30:32,747 [INFO] [브런치 AI Weekly] 글 5개 발견
+2026-06-04 17:30:32,748 [INFO] 새 글 발견: 모델 경쟁 끝, 하네스 시대
+2026-06-04 17:30:34,138 [INFO] HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 400 Bad Request"
+2026-06-04 17:30:34,140 [ERROR] [브런치 AI Weekly] 오류: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CbhuZKb34RmWpuUyFTZCk'}
+Traceback (most recent call last):
+  File "C:\Users\SKTelecom\Downloads\telegram_news_bot\home\claude\telegram_news_bot\bot.py", line 125, in check_and_send
+    summary = summarize(article["title"], article["content"], article["url"])
+  File "C:\Users\SKTelecom\Downloads\telegram_news_bot\home\claude\telegram_news_bot\bot.py", line 67, in summarize
+    message = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=800,
+        messages=[{"role": "user", "content": prompt}],
+    )
+  File "C:\Users\SKTelecom\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\anthropic\_utils\_utils.py", line 294, in wrapper
+    return func(*args, **kwargs)
+  File "C:\Users\SKTelecom\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\anthropic\resources\messages\messages.py", line 1006, in create
+    return self._post(
+           ~~~~~~~~~~^
+        "/v1/messages",
+        ^^^^^^^^^^^^^^^
+    ...<30 lines>...
+        stream_cls=Stream[RawMessageStreamEvent],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\SKTelecom\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\anthropic\_base_client.py", line 1374, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SKTelecom\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\anthropic\_base_client.py", line 1147, in request
+    raise self._make_status_error_from_response(err.response) from None
+anthropic.BadRequestError: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CbhuZKb34RmWpuUyFTZCk'}
+2026-06-05 09:10:53,989 [INFO] 봇 시작! 60분마다 확인합니다.
+2026-06-05 09:10:53,990 [INFO] 새 글 확인 중... (이미 발송된 글: 0개)
+2026-06-05 09:10:53,990 [INFO] ====== WebDriver manager ======
+2026-06-05 09:11:04,152 [INFO] Get LATEST chromedriver version for google-chrome
+2026-06-05 09:11:05,058 [INFO] There is no [win64] chromedriver "149.0.7827.54" for browser google-chrome "149.0.7827" in cache
+2026-06-05 09:11:09,439 [INFO] There is no [win64] chromedriver "149.0.7827.54" for browser google-chrome "149.0.7827" in cache
+2026-06-05 09:11:09,439 [INFO] Get LATEST chromedriver version for google-chrome
+2026-06-05 09:11:11,140 [INFO] WebDriver version 149.0.7827.54 selected
+2026-06-05 09:11:11,149 [INFO] Modern chrome version https://storage.googleapis.com/chrome-for-testing-public/149.0.7827.54/win64/chromedriver-win64.zip
+2026-06-05 09:11:11,150 [INFO] About to download new driver from https://storage.googleapis.com/chrome-for-testing-public/149.0.7827.54/win64/chromedriver-win64.zip
+2026-06-05 09:11:12,061 [INFO] Driver downloading response is 200
+2026-06-05 09:11:14,174 [INFO] Driver has been saved in cache [C:\Users\SKTelecom\.wdm\drivers\chromedriver\win64\149.0.7827.54]
+2026-06-05 09:11:29,623 [INFO] 브런치에서 링크 20개 발견
+2026-06-05 09:11:56,601 [INFO] [브런치 AI Weekly] 글 5개 발견
+2026-06-05 09:11:56,607 [INFO] 새 글 발견: 이제는 AI를 그만 써주세요
+2026-06-05 09:11:59,402 [INFO] 텔레그램 발송 완료
+2026-06-05 09:12:01,409 [INFO] 새 글 발견: 모델 경쟁 끝, 하네스 시대
+2026-06-05 09:12:03,921 [INFO] 텔레그램 발송 완료
+2026-06-05 09:12:05,926 [INFO] 새 글 발견: AI가 카드를 긁기 시작했다
+2026-06-05 09:12:08,082 [INFO] 텔레그램 발송 완료
+2026-06-05 09:12:10,087 [INFO] 새 글 발견: AI가 만든 다직장(overemployed)의 시대
+2026-06-05 09:12:11,611 [INFO] 텔레그램 발송 완료
+2026-06-05 09:12:13,614 [INFO] 새 글 발견: GPT 5.5 출시, 클로드와 다른 전략
+2026-06-05 09:12:15,068 [INFO] 텔레그램 발송 완료
