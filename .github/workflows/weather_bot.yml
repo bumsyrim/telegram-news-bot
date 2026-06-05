@@ -1,0 +1,31 @@
+name: Daily Weather Report
+
+on:
+  schedule:
+    - cron: '0 22 * * *'  # 매일 오전 7시 KST (= 22:00 UTC)
+  workflow_dispatch:
+
+jobs:
+  weather:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send weather report
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
+          ANTHROPIC_API_KEY: "dummy"
+          CHECK_INTERVAL_MINUTES: "60"
+        run: python weather.py --send

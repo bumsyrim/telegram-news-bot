@@ -32,6 +32,7 @@ HELP_TEXT = (
     "/add URL 이름 - 사이트 추가\n"
     "/remove 이름 - 사이트 삭제\n"
     "/interval 숫자 - 실행 주기 변경 (분)\n"
+    "/location 위치명 - 날씨 위치 변경\n"
     "/run - 즉시 뉴스 체크 실행"
 )
 
@@ -208,6 +209,45 @@ def handle_interval(chat_id: int, args: str):
     send_message(chat_id, msg)
 
 
+def handle_location(chat_id: int, args: str):
+    from weather import LOCATION_MAP
+
+    query = args.strip()
+    if not query:
+        data = load_sources()
+        current = data.get("location", "서울")
+        sample = ["서울", "서울 강남구", "서울 마포구", "부산", "대구", "인천", "대전", "광주"]
+        send_message(
+            chat_id,
+            f"📍 현재 위치: <b>{current}</b>\n\n"
+            f"사용법: /location 위치명\n"
+            f"예시: {' / '.join(sample)}\n\n"
+            f"서울 각 구(강남구, 마포구 등) 및 주요 도시 지원",
+        )
+        return
+
+    # 정확히 일치하는 키 우선
+    if query in LOCATION_MAP:
+        matched = query
+    else:
+        # 부분 일치 검색
+        candidates = [k for k in LOCATION_MAP if query in k]
+        if not candidates:
+            send_message(chat_id, f"'{query}' 위치를 찾을 수 없습니다.\n/location 으로 지원 위치 목록을 확인하세요.")
+            return
+        if len(candidates) > 1:
+            send_message(chat_id, f"여러 결과가 있습니다:\n{', '.join(sorted(candidates)[:10])}\n\n더 구체적으로 입력해주세요.")
+            return
+        matched = candidates[0]
+
+    data = load_sources()
+    data["location"] = matched
+    save_sources(data)
+    display = LOCATION_MAP[matched]["display"]
+    log.info("위치 변경: %s", display)
+    send_message(chat_id, f"📍 날씨 위치가 <b>{display}</b>으로 변경되었습니다.\n내일 오전 7시부터 적용됩니다.")
+
+
 def handle_run(chat_id: int):
     send_message(chat_id, "🔄 뉴스 체크를 시작합니다...")
     bot_path = Path(__file__).parent / "bot.py"
@@ -247,6 +287,7 @@ def dispatch(chat_id: int, text: str, username: str = ""):
         "/add": lambda: handle_add(chat_id, args),
         "/remove": lambda: handle_remove(chat_id, args),
         "/interval": lambda: handle_interval(chat_id, args),
+        "/location": lambda: handle_location(chat_id, args),
         "/run": lambda: handle_run(chat_id),
     }
 

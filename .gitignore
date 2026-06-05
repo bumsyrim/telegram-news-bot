@@ -1,6 +1,5 @@
 .env
 seen.json
-users.json
 bot.log
 commands.log
 __pycache__/

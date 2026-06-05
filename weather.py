@@ -1,0 +1,298 @@
+"""
+날씨/미세먼지 조회 → 텔레그램 발송
+기상청 단기예보 API + 에어코리아 API
+"""
+import argparse
+import json
+import logging
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import requests
+
+log = logging.getLogger(__name__)
+
+KST = timezone(timedelta(hours=9))
+USERS_FILE = Path("users.json")
+SOURCES_FILE = Path("sources.json")
+
+GRADE_EMOJI = {
+    "1": "😊 좋음",
+    "2": "🙂 보통",
+    "3": "😷 나쁨",
+    "4": "🤢 매우나쁨",
+}
+
+# ── 위치 매핑 (기상청 격자 좌표 + 에어코리아 측정소) ───────────────
+
+_SEOUL_GU = [
+    ("종로구",  60, 127, "종로구"),
+    ("중구",    60, 127, "중구"),
+    ("용산구",  60, 126, "용산구"),
+    ("성동구",  61, 127, "성동구"),
+    ("광진구",  62, 127, "광진구"),
+    ("동대문구",61, 127, "동대문구"),
+    ("중랑구",  62, 128, "중랑구"),
+    ("성북구",  61, 128, "성북구"),
+    ("강북구",  61, 129, "강북구"),
+    ("도봉구",  61, 130, "도봉구"),
+    ("노원구",  61, 129, "노원구"),
+    ("은평구",  59, 127, "은평구"),
+    ("서대문구",59, 127, "서대문구"),
+    ("마포구",  59, 127, "마포구"),
+    ("양천구",  58, 126, "양천구"),
+    ("강서구",  58, 126, "강서구"),
+    ("구로구",  58, 125, "구로구"),
+    ("금천구",  59, 124, "금천구"),
+    ("영등포구",58, 126, "영등포구"),
+    ("동작구",  59, 125, "동작구"),
+    ("관악구",  59, 125, "관악구"),
+    ("서초구",  61, 125, "서초구"),
+    ("강남구",  61, 125, "강남구"),
+    ("송파구",  62, 125, "송파구"),
+    ("강동구",  62, 126, "강동구"),
+]
+
+LOCATION_MAP: dict = {
+    "서울": {"nx": 60, "ny": 127, "station": "종로구", "display": "서울"},
+    **{
+        gu: {"nx": nx, "ny": ny, "station": st, "display": f"서울 {gu}"}
+        for gu, nx, ny, st in _SEOUL_GU
+    },
+    **{
+        f"서울 {gu}": {"nx": nx, "ny": ny, "station": st, "display": f"서울 {gu}"}
+        for gu, nx, ny, st in _SEOUL_GU
+    },
+    "부산":  {"nx": 98,  "ny": 76,  "station": "연제구",        "display": "부산"},
+    "대구":  {"nx": 89,  "ny": 91,  "station": "수성구",        "display": "대구"},
+    "인천":  {"nx": 55,  "ny": 124, "station": "미추홀구",      "display": "인천"},
+    "광주":  {"nx": 58,  "ny": 74,  "station": "북구",          "display": "광주"},
+    "대전":  {"nx": 67,  "ny": 100, "station": "서구",          "display": "대전"},
+    "울산":  {"nx": 102, "ny": 84,  "station": "울주군",        "display": "울산"},
+    "세종":  {"nx": 66,  "ny": 103, "station": "세종",          "display": "세종"},
+    "수원":  {"nx": 60,  "ny": 121, "station": "수원시 권선구", "display": "수원"},
+    "성남":  {"nx": 62,  "ny": 123, "station": "성남시 분당구", "display": "성남"},
+    "제주":  {"nx": 52,  "ny": 38,  "station": "제주시",        "display": "제주"},
+}
+
+
+def get_location_config() -> dict:
+    """sources.json에서 위치 설정 읽기"""
+    if SOURCES_FILE.exists():
+        data = json.loads(SOURCES_FILE.read_text(encoding="utf-8"))
+        key = data.get("location", "서울")
+        if key in LOCATION_MAP:
+            return LOCATION_MAP[key]
+        log.warning("알 수 없는 위치 '%s', 서울 기본값 사용", key)
+    return LOCATION_MAP["서울"]
+
+
+# ── PM 등급 계산 ───────────────────────────────────────────────────
+
+def _pm_grade(value: int, kind: str) -> str:
+    if kind == "pm10":
+        if value <= 30:  return "1"
+        if value <= 80:  return "2"
+        if value <= 150: return "3"
+        return "4"
+    else:  # pm25
+        if value <= 15: return "1"
+        if value <= 35: return "2"
+        if value <= 75: return "3"
+        return "4"
+
+
+# ── API 호출 ───────────────────────────────────────────────────────
+
+def fetch_weather(nx: int, ny: int, api_key: str) -> dict:
+    """기상청 단기예보 API"""
+    now = datetime.now(KST)
+    hour = now.hour
+    base_times = [2, 5, 8, 11, 14, 17, 20, 23]
+    available = [t for t in base_times if t <= hour]
+
+    if not available:
+        base_date = (now - timedelta(days=1)).strftime("%Y%m%d")
+        base_time = "2300"
+    else:
+        base_date = now.strftime("%Y%m%d")
+        base_time = f"{max(available):02d}00"
+
+    url = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
+    params = {
+        "serviceKey": api_key,
+        "pageNo": 1,
+        "numOfRows": 1000,
+        "dataType": "JSON",
+        "base_date": base_date,
+        "base_time": base_time,
+        "nx": nx,
+        "ny": ny,
+    }
+    resp = requests.get(url, params=params, timeout=15)
+    resp.raise_for_status()
+    items = resp.json()["response"]["body"]["items"]["item"]
+
+    today = now.strftime("%Y%m%d")
+    result: dict = {"pop": 0}
+
+    for item in items:
+        if item["fcstDate"] != today:
+            continue
+        cat, val, fcst_time = item["category"], item["fcstValue"], item["fcstTime"]
+
+        if cat == "TMX":
+            result["max_temp"] = val
+        elif cat == "TMN":
+            result["min_temp"] = val
+        elif cat == "POP":
+            result["pop"] = max(result["pop"], int(val))
+        elif cat == "SKY" and fcst_time == "1200":
+            result["sky"] = val
+        elif cat == "PTY" and fcst_time == "1200":
+            result["pty"] = val
+
+    return result
+
+
+def fetch_air_quality(station: str, api_key: str) -> dict:
+    """에어코리아 실시간 대기질 API"""
+    url = "https://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMsrstnAcctoRltmMesureDnsty"
+    params = {
+        "serviceKey": api_key,
+        "returnType": "json",
+        "numOfRows": 1,
+        "pageNo": 1,
+        "stationName": station,
+        "dataTerm": "DAILY",
+        "ver": "1.0",
+    }
+    resp = requests.get(url, params=params, timeout=15)
+    resp.raise_for_status()
+    items = resp.json()["response"]["body"]["items"]
+
+    if not items:
+        return {}
+
+    item = items[0]
+
+    def safe_int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return 0
+
+    pm10 = safe_int(item.get("pm10Value"))
+    pm25 = safe_int(item.get("pm25Value"))
+    return {
+        "pm10": pm10,
+        "pm25": pm25,
+        "pm10_grade": str(item.get("pm10Grade") or _pm_grade(pm10, "pm10")),
+        "pm25_grade": str(item.get("pm25Grade") or _pm_grade(pm25, "pm25")),
+    }
+
+
+# ── 메시지 포매팅 ──────────────────────────────────────────────────
+
+def format_weather_message(display: str, weather: dict, air: dict) -> str:
+    sky_map = {"1": "맑음 ☀️", "3": "구름많음 ⛅", "4": "흐림 ☁️"}
+    pty_map = {"0": "", "1": "비 🌧️", "2": "비/눈 🌨️", "3": "눈 ❄️", "4": "소나기 ⛈️"}
+
+    sky = sky_map.get(str(weather.get("sky", "1")), "맑음 ☀️")
+    pty = pty_map.get(str(weather.get("pty", "0")), "")
+    condition = pty if pty else sky
+    date_str = datetime.now(KST).strftime("%Y년 %m월 %d일")
+
+    lines = [
+        f"🌤️ <b>{display} 날씨 · {date_str}</b>",
+        "",
+        f"🌡️ 기온: {weather.get('min_temp', '-')}°C ~ {weather.get('max_temp', '-')}°C",
+        f"☁️ 날씨: {condition}",
+        f"🌂 강수확률: {weather.get('pop', 0)}%",
+    ]
+
+    if air:
+        lines += [
+            "",
+            "🏭 <b>대기질</b>",
+            f"미세먼지(PM10):   {air.get('pm10', '-')}㎍/㎥  {GRADE_EMOJI.get(air.get('pm10_grade', '1'), '')}",
+            f"초미세먼지(PM2.5): {air.get('pm25', '-')}㎍/㎥  {GRADE_EMOJI.get(air.get('pm25_grade', '1'), '')}",
+        ]
+
+    return "\n".join(lines)
+
+
+# ── 발송 ──────────────────────────────────────────────────────────
+
+def _load_subscribers(fallback_id) -> list:
+    if USERS_FILE.exists():
+        data = json.loads(USERS_FILE.read_text(encoding="utf-8"))
+        subs = data.get("subscribers", [])
+        if subs:
+            return subs
+    return [int(fallback_id)]
+
+
+def send_weather_report():
+    from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, WEATHER_API_KEY
+
+    if not WEATHER_API_KEY:
+        log.error("WEATHER_API_KEY 가 설정되지 않았습니다.")
+        return
+
+    loc = get_location_config()
+    log.info("날씨 조회: %s (nx=%s ny=%s station=%s)", loc["display"], loc["nx"], loc["ny"], loc["station"])
+
+    weather, air = {}, {}
+
+    try:
+        weather = fetch_weather(loc["nx"], loc["ny"], WEATHER_API_KEY)
+        log.info("날씨 조회 성공: %s", weather)
+    except Exception as e:
+        log.error("날씨 조회 실패: %s", e, exc_info=True)
+
+    try:
+        air = fetch_air_quality(loc["station"], WEATHER_API_KEY)
+        log.info("대기질 조회 성공: %s", air)
+    except Exception as e:
+        log.error("대기질 조회 실패: %s", e, exc_info=True)
+
+    if not weather and not air:
+        log.error("날씨/대기질 모두 조회 실패, 발송 중단")
+        return
+
+    msg = format_weather_message(loc["display"], weather, air)
+    subscribers = _load_subscribers(TELEGRAM_CHAT_ID)
+    api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+    failed = 0
+    for chat_id in subscribers:
+        try:
+            resp = requests.post(
+                api_url,
+                json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+        except Exception as e:
+            log.warning("발송 실패 (chat_id=%s): %s", chat_id, e)
+            failed += 1
+
+    log.info("날씨 알림 발송: %d명 중 %d명 성공", len(subscribers), len(subscribers) - failed)
+
+
+# ── 진입점 ─────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
+    parser = argparse.ArgumentParser(description="날씨/미세먼지 텔레그램 알림")
+    parser.add_argument("--send", action="store_true", help="날씨 알림 발송")
+    args = parser.parse_args()
+
+    if args.send:
+        send_weather_report()
+    else:
+        parser.print_help()

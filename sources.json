@@ -1,5 +1,6 @@
 {
   "interval_minutes": 60,
+  "location": "서울",
   "sources": [
     {
       "name": "브런치 AI Weekly",
