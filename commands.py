@@ -335,20 +335,21 @@ def dispatch(chat_id: int, text: str, username: str = ""):
     cmd = _parse_cmd(text)
     args = parts[1] if len(parts) > 1 else ""
 
+    N = lambda s: unicodedata.normalize("NFC", s)
     public_handlers = {
-        "/start":    lambda: handle_start(chat_id, username),
-        "/stop":     lambda: handle_stop(chat_id, username),
-        "/날씨":     lambda: handle_weather_query(chat_id),
-        "/weather":  lambda: handle_weather_query(chat_id),
-        "/location": lambda: handle_location(chat_id, args),
-        "/help":     lambda: send_message(chat_id, HELP_TEXT),
+        N("/start"):    lambda: handle_start(chat_id, username),
+        N("/stop"):     lambda: handle_stop(chat_id, username),
+        N("/날씨"):     lambda: handle_weather_query(chat_id),
+        N("/weather"):  lambda: handle_weather_query(chat_id),
+        N("/location"): lambda: handle_location(chat_id, args),
+        N("/help"):     lambda: send_message(chat_id, HELP_TEXT),
     }
     admin_handlers = {
-        "/list":     lambda: handle_list(chat_id),
-        "/add":      lambda: handle_add(chat_id, args),
-        "/remove":   lambda: handle_remove(chat_id, args),
-        "/interval": lambda: handle_interval(chat_id, args),
-        "/run":      lambda: handle_run(chat_id),
+        N("/list"):     lambda: handle_list(chat_id),
+        N("/add"):      lambda: handle_add(chat_id, args),
+        N("/remove"):   lambda: handle_remove(chat_id, args),
+        N("/interval"): lambda: handle_interval(chat_id, args),
+        N("/run"):      lambda: handle_run(chat_id),
     }
 
     if cmd in public_handlers:
