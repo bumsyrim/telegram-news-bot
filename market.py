@@ -5,20 +5,13 @@
 import argparse
 import json
 import logging
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
 import yfinance as yf
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
-from webdriver_manager.chrome import ChromeDriverManager
+from curl_cffi import requests as cffi_req
 
 log = logging.getLogger(__name__)
 
@@ -36,23 +29,6 @@ TICKERS = [
 ]
 
 
-def _make_driver():
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1280,800")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    )
-    service = Service(ChromeDriverManager().install())
-    return webdriver.Chrome(service=service, options=options)
-
-
 def _parse_number(text: str) -> float | None:
     """쉼표·공백·기호 제거 후 float 변환. 실패 시 None."""
     try:
@@ -63,38 +39,74 @@ def _parse_number(text: str) -> float | None:
 
 
 def fetch_kospi200_futures() -> dict:
-    """Investing.com에서 코스피200 야간선물 데이터 크롤링."""
-    driver = None
-    try:
-        driver = _make_driver()
-        driver.get(FUTURES_URL)
+    """Investing.com에서 코스피200 야간선물 데이터 크롤링.
 
-        # 가격 요소 대기 (data-test 속성 또는 공통 가격 클래스)
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "[data-test='instrument-price-last']"))
-        )
-        time.sleep(2)
+    curl_cffi로 Chrome TLS 지문 흉내 → Cloudflare 우회.
+    Selenium headless는 Cloudflare JS 챌린지에서 Chrome 크래시 발생.
+    """
+    resp = cffi_req.get(
+        FUTURES_URL,
+        impersonate="chrome124",
+        headers={
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "accept-language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+            "referer": "https://kr.investing.com/",
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
 
-        soup = BeautifulSoup(driver.page_source, "lxml")
+    soup = BeautifulSoup(resp.text, "lxml")
+    log.info("Investing.com 응답 수신 (상태: %s)", resp.status_code)
 
-        # ── 현재가 ──
-        price_el = soup.select_one("[data-test='instrument-price-last']")
-        price = _parse_number(price_el.get_text()) if price_el else None
-        if price is None:
-            raise ValueError("현재가 파싱 실패")
+    # ── 현재가: 여러 셀렉터 순서대로 시도 ──
+    PRICE_SELECTORS = [
+        "[data-test='instrument-price-last']",
+        "[class*='last-price']",
+        "[class*='priceText']",
+        "[class*='text-5xl']",
+    ]
+    price = None
+    for sel in PRICE_SELECTORS:
+        el = soup.select_one(sel)
+        if el:
+            val = _parse_number(el.get_text())
+            if val and val > 10:
+                price = val
+                log.info("현재가 파싱 성공 (셀렉터: %s): %.2f", sel, price)
+                break
 
-        # ── 등락률 ──
-        pct_el = soup.select_one("[data-test='instrument-price-change-percent']")
-        pct_text = pct_el.get_text().strip().strip("()") if pct_el else ""
-        change_pct = _parse_number(pct_text)
+    if price is None:
+        page_title = soup.title.get_text() if soup.title else "unknown"
+        raise ValueError(f"현재가 파싱 실패 (페이지: {page_title})")
 
-        # ── 시가·고가·저가: dl>dt+dd 쌍 탐색 ──
-        KEY_MAP = {
-            "시가": "open", "오픈": "open",
-            "고가": "high", "최고": "high",
-            "저가": "low",  "최저": "low",
-        }
-        extras: dict = {}
+    # ── 등락률 ──
+    pct_el = soup.select_one("[data-test='instrument-price-change-percent']")
+    pct_text = pct_el.get_text().strip().strip("()") if pct_el else ""
+    change_pct = _parse_number(pct_text) or 0.0
+
+    # ── 시가·고가·저가 ──
+    # 1순위: data-test 속성
+    DATA_TEST_MAP = {
+        "instrument-price-open":  "open",
+        "instrument-price-high":  "high",
+        "instrument-price-low":   "low",
+    }
+    extras: dict = {}
+    for attr, key in DATA_TEST_MAP.items():
+        el = soup.select_one(f"[data-test='{attr}']")
+        if el:
+            val = _parse_number(el.get_text())
+            if val is not None:
+                extras[key] = val
+
+    # 2순위: dl > dt + dd 텍스트 매칭
+    KEY_MAP = {
+        "시가": "open", "오픈": "open",
+        "고가": "high", "최고": "high",
+        "저가": "low",  "최저": "low",
+    }
+    if len(extras) < 3:
         for dt in soup.find_all("dt"):
             label = dt.get_text(strip=True)
             dd = dt.find_next_sibling("dd")
@@ -106,29 +118,25 @@ def fetch_kospi200_futures() -> dict:
                     if val is not None:
                         extras[key] = val
 
-        # fallback: span 인접 쌍으로도 시도
-        if len(extras) < 3:
-            spans = soup.find_all("span")
-            for i, span in enumerate(spans[:-1]):
-                label = span.get_text(strip=True)
-                for kor, key in KEY_MAP.items():
-                    if kor in label and key not in extras:
-                        val = _parse_number(spans[i + 1].get_text())
-                        if val is not None:
-                            extras[key] = val
+    # 3순위: span 인접 쌍
+    if len(extras) < 3:
+        spans = soup.find_all("span")
+        for i, span in enumerate(spans[:-1]):
+            label = span.get_text(strip=True)
+            for kor, key in KEY_MAP.items():
+                if kor in label and key not in extras:
+                    val = _parse_number(spans[i + 1].get_text())
+                    if val is not None:
+                        extras[key] = val
 
-        log.info("코스피200 야간선물: price=%.2f pct=%s extras=%s", price, change_pct, extras)
-        return {
-            "price": price,
-            "change_pct": change_pct or 0.0,
-            "open": extras.get("open"),
-            "high": extras.get("high"),
-            "low":  extras.get("low"),
-        }
-
-    finally:
-        if driver:
-            driver.quit()
+    log.info("코스피200 야간선물: price=%.2f pct=%.2f extras=%s", price, change_pct, extras)
+    return {
+        "price": price,
+        "change_pct": change_pct,
+        "open": extras.get("open"),
+        "high": extras.get("high"),
+        "low":  extras.get("low"),
+    }
 
 
 def fetch_market_data() -> tuple[list, Exception | None]:
@@ -193,12 +201,14 @@ def format_market_message(data: list) -> str:
                 f"- {label}: {price:,.0f}원 {arrow} {sign}{change:.0f}원 ({sign}{pct:.2f}%)"
             )
         elif item["kind"] == "futures_kr":
-            o = item.get("open")
-            h = item.get("high")
-            lo = item.get("low")
-            detail = ""
-            if o is not None and h is not None and lo is not None:
-                detail = f" (시:{o:,.2f} 고:{h:,.2f} 저:{lo:,.2f})"
+            parts = []
+            if item.get("open") is not None:
+                parts.append(f"시:{item['open']:,.2f}")
+            if item.get("high") is not None:
+                parts.append(f"고:{item['high']:,.2f}")
+            if item.get("low") is not None:
+                parts.append(f"저:{item['low']:,.2f}")
+            detail = f" ({' '.join(parts)})" if parts else ""
             lines.append(
                 f"- {label}: {price:,.2f} {arrow} {sign}{pct:.1f}%{detail}"
             )
