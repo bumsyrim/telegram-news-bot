@@ -8,18 +8,20 @@ on:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Restore seen.json
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: seen.json
           key: seen-json-${{ github.run_id }}
           restore-keys: seen-json-
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -39,7 +41,7 @@ jobs:
         run: python bot.py --once
 
       - name: Save seen.json
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: seen.json
           key: seen-json-${{ github.run_id }}
