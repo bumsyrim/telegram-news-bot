@@ -23,7 +23,7 @@ USERS_FILE = Path("users.json")
 # 누구나 사용 가능한 명령어 (NFC 정규화된 소문자로 저장)
 PUBLIC_COMMANDS = {
     unicodedata.normalize("NFC", c)
-    for c in {"/start", "/stop", "/날씨", "/weather", "/location"}
+    for c in {"/start", "/stop", "/날씨", "/weather", "/location", "/코스피", "/kospi"}
 }
 
 log = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ HELP_TEXT = (
     "/stop - 뉴스 구독 취소\n"
     "/날씨 (또는 /weather) - 내 위치 기준 날씨/미세먼지 조회\n"
     "/location 위치명 - 내 날씨 위치 변경\n"
+    "/코스피 (또는 /kospi) - 코스피 지수 실시간 조회\n"
     "/list - 등록된 사이트 목록\n"
     "/add URL 이름 - 사이트 추가\n"
     "/remove 이름 - 사이트 삭제\n"
@@ -182,6 +183,18 @@ def handle_weather_query(chat_id: int):
 
     msg = format_weather_message(loc["display"], weather, air)
     send_message(chat_id, msg)
+
+
+def handle_kospi_query(chat_id: int):
+    from market import fetch_kospi, format_kospi_message
+
+    send_message(chat_id, "🔍 코스피 조회 중...")
+    try:
+        data = fetch_kospi()
+        send_message(chat_id, format_kospi_message(data))
+    except Exception as e:
+        log.error("코스피 조회 실패: %s", e, exc_info=True)
+        send_message(chat_id, "❌ 코스피 정보를 가져올 수 없습니다. 잠시 후 다시 시도해주세요.")
 
 
 def handle_list(chat_id: int):
@@ -342,6 +355,8 @@ def dispatch(chat_id: int, text: str, username: str = ""):
         N("/날씨"):     lambda: handle_weather_query(chat_id),
         N("/weather"):  lambda: handle_weather_query(chat_id),
         N("/location"): lambda: handle_location(chat_id, args),
+        N("/코스피"):   lambda: handle_kospi_query(chat_id),
+        N("/kospi"):    lambda: handle_kospi_query(chat_id),
         N("/help"):     lambda: send_message(chat_id, HELP_TEXT),
     }
     admin_handlers = {

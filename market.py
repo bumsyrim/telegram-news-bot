@@ -29,6 +29,59 @@ TICKERS = [
 ]
 
 
+def fetch_kospi() -> dict:
+    """KOSPI 지수 실시간 조회 (yfinance ^KS11)."""
+    ticker = yf.Ticker("^KS11")
+    fi = ticker.fast_info
+
+    price = fi.last_price
+    prev = fi.previous_close
+    if price is None or prev is None or prev == 0:
+        raise ValueError("KOSPI 데이터를 가져올 수 없습니다.")
+
+    # 최근 1분봉에서 마지막 체결 시각 추출
+    hist = ticker.history(period="1d", interval="1m")
+    if not hist.empty:
+        last_time = hist.index[-1].tz_convert(KST)
+    else:
+        last_time = datetime.now(KST)
+
+    change = price - prev
+    change_pct = change / prev * 100
+
+    return {
+        "price": price,
+        "change": change,
+        "change_pct": change_pct,
+        "open": fi.open,
+        "high": fi.day_high,
+        "low": fi.day_low,
+        "time": last_time,
+    }
+
+
+def format_kospi_message(data: dict) -> str:
+    price = data["price"]
+    change = data["change"]
+    pct = data["change_pct"]
+    arrow = "▲" if change >= 0 else "▼"
+    sign = "+" if change >= 0 else ""
+    time_str = data["time"].strftime("%Y년 %m월 %d일 %H:%M")
+
+    lines = [
+        "<b>[코스피]</b>",
+        f"{time_str} 기준",
+        f"- 현재: {price:,.0f} {arrow} {sign}{change:,.0f} ({sign}{pct:.2f}%)",
+    ]
+    if data.get("open") is not None:
+        lines.append(f"- 시가: {data['open']:,.0f}")
+    if data.get("high") is not None:
+        lines.append(f"- 고가: {data['high']:,.0f}")
+    if data.get("low") is not None:
+        lines.append(f"- 저가: {data['low']:,.0f}")
+    return "\n".join(lines)
+
+
 def _parse_number(text: str) -> float | None:
     """쉼표·공백·기호 제거 후 float 변환. 실패 시 None."""
     try:
