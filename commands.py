@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
 import requests
@@ -19,8 +20,11 @@ SOURCES_FILE = Path("sources.json")
 WORKFLOW_FILE = Path(".github/workflows/run_bot.yml")
 USERS_FILE = Path("users.json")
 
-# 누구나 사용 가능한 명령어
-PUBLIC_COMMANDS = {"/start", "/stop", "/날씨", "/weather"}
+# 누구나 사용 가능한 명령어 (NFC 정규화된 소문자로 저장)
+PUBLIC_COMMANDS = {
+    unicodedata.normalize("NFC", c)
+    for c in {"/start", "/stop", "/날씨", "/weather"}
+}
 
 log = logging.getLogger(__name__)
 
@@ -303,9 +307,16 @@ def handle_run(chat_id: int):
 
 # ── 명령어 디스패치 ───────────────────────────────────────
 
+def _parse_cmd(text: str) -> str:
+    """첫 토큰을 소문자+NFC 정규화해서 반환. /cmd@botname 형태도 처리."""
+    raw = text.strip().split(maxsplit=1)[0]
+    raw = raw.split("@")[0]
+    return unicodedata.normalize("NFC", raw).lower()
+
+
 def dispatch(chat_id: int, text: str, username: str = ""):
     parts = text.strip().split(maxsplit=1)
-    cmd = parts[0].lower().split("@")[0]  # /cmd@botname 형태 처리
+    cmd = _parse_cmd(text)
     args = parts[1] if len(parts) > 1 else ""
 
     public_handlers = {
@@ -359,9 +370,10 @@ def run_polling():
                 if not text.startswith("/"):
                     continue
 
-                cmd = text.strip().split()[0].lower().split("@")[0]
+                cmd = _parse_cmd(text)
                 is_admin = str(chat_id) == str(TELEGRAM_CHAT_ID)
                 is_public_cmd = cmd in PUBLIC_COMMANDS
+                log.debug("cmd=%r is_public=%s is_admin=%s", cmd, is_public_cmd, is_admin)
 
                 if not is_public_cmd and not is_admin:
                     log.warning("관리자 전용 명령어 시도: %s (chat_id=%s)", cmd, chat_id)
