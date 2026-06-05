@@ -207,19 +207,17 @@ def format_weather_message(display: str, weather: dict, air: dict) -> str:
     date_str = datetime.now(KST).strftime("%Y년 %m월 %d일")
 
     lines = [
-        f"[날씨] 🌤️ <b>{display} 날씨 · {date_str}</b>",
-        "",
-        f"🌡️ 기온: {weather.get('min_temp', '-')}°C ~ {weather.get('max_temp', '-')}°C",
-        f"☁️ 날씨: {condition}",
-        f"🌂 강수확률: {weather.get('pop', 0)}%",
+        "<b>[날씨]</b>",
+        f"{display} · {date_str}",
+        f"- 기온: {weather.get('min_temp', '-')}°C ~ {weather.get('max_temp', '-')}°C",
+        f"- 날씨: {condition}",
+        f"- 강수확률: {weather.get('pop', 0)}%",
     ]
 
     if air:
         lines += [
-            "",
-            "🏭 <b>대기질</b>",
-            f"미세먼지(PM10):   {air.get('pm10', '-')}㎍/㎥  {GRADE_EMOJI.get(air.get('pm10_grade', '1'), '')}",
-            f"초미세먼지(PM2.5): {air.get('pm25', '-')}㎍/㎥  {GRADE_EMOJI.get(air.get('pm25_grade', '1'), '')}",
+            f"- 미세먼지(PM10): {air.get('pm10', '-')}㎍/㎥ {GRADE_EMOJI.get(air.get('pm10_grade', '1'), '')}",
+            f"- 초미세먼지(PM2.5): {air.get('pm25', '-')}㎍/㎥ {GRADE_EMOJI.get(air.get('pm25_grade', '1'), '')}",
         ]
 
     return "\n".join(lines)

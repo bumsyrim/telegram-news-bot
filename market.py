@@ -19,11 +19,11 @@ USERS_FILE = Path("users.json")
 # (야후 파이낸스 티커, 표시 이름, 종류)
 # CME 코스피200 선물(KM=F)은 Yahoo Finance 미지원 → KOSPI200 지수(^KS200) 대체
 TICKERS = [
-    ("^IXIC",    "🇺🇸 나스닥",        "index_us"),
-    ("^GSPC",    "🇺🇸 S&P500",        "index_us"),
-    ("^DJI",     "🇺🇸 다우존스",      "index_us"),
-    ("^KS200",   "🌏 코스피200",       "index_kr"),
-    ("USDKRW=X", "💵 원/달러 환율",    "forex"),
+    ("^IXIC",    "나스닥",    "index_us"),
+    ("^GSPC",    "S&P500",    "index_us"),
+    ("^DJI",     "다우존스",  "index_us"),
+    ("^KS200",   "코스피200", "index_kr"),
+    ("USDKRW=X", "원/달러",   "forex"),
 ]
 
 
@@ -57,7 +57,10 @@ def fetch_market_data() -> list:
 
 def format_market_message(data: list) -> str:
     date_str = datetime.now(KST).strftime("%Y년 %m월 %d일")
-    lines = [f"[금융] 📊 <b>미국 시장 · {date_str}</b>", ""]
+    lines = [
+        "<b>[금융]</b>",
+        f"전일 시장현황 · {date_str}",
+    ]
 
     for item in data:
         label = item["label"]
@@ -69,15 +72,15 @@ def format_market_message(data: list) -> str:
 
         if item["kind"] == "forex":
             lines.append(
-                f"{label}: {price:,.0f}원 {arrow} {sign}{change:.0f}원 ({sign}{pct:.2f}%)"
+                f"- {label}: {price:,.0f}원 {arrow} {sign}{change:.0f}원 ({sign}{pct:.2f}%)"
             )
         elif item["kind"] == "index_kr":
             lines.append(
-                f"{label}: {price:,.2f} {arrow} {sign}{pct:.1f}%"
+                f"- {label}: {price:,.2f} {arrow} {sign}{pct:.1f}%"
             )
         else:  # index_us
             lines.append(
-                f"{label}: {price:,.0f} {arrow} {sign}{pct:.1f}%"
+                f"- {label}: {price:,.0f} {arrow} {sign}{pct:.1f}%"
             )
 
     return "\n".join(lines)
