@@ -204,7 +204,7 @@ def format_weather_message(display: str, weather: dict, air: dict) -> str:
     date_str = datetime.now(KST).strftime("%Y년 %m월 %d일")
 
     lines = [
-        f"🌤️ <b>{display} 날씨 · {date_str}</b>",
+        f"[날씨] 🌤️ <b>{display} 날씨 · {date_str}</b>",
         "",
         f"🌡️ 기온: {weather.get('min_temp', '-')}°C ~ {weather.get('max_temp', '-')}°C",
         f"☁️ 날씨: {condition}",

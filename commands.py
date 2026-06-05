@@ -20,7 +20,7 @@ WORKFLOW_FILE = Path(".github/workflows/run_bot.yml")
 USERS_FILE = Path("users.json")
 
 # 누구나 사용 가능한 명령어
-PUBLIC_COMMANDS = {"/start", "/stop"}
+PUBLIC_COMMANDS = {"/start", "/stop", "/날씨", "/weather"}
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +28,7 @@ HELP_TEXT = (
     "사용 가능한 명령어:\n"
     "/start - 뉴스 구독 등록\n"
     "/stop - 뉴스 구독 취소\n"
+    "/날씨 (또는 /weather) - 현재 날씨/미세먼지 조회\n"
     "/list - 등록된 사이트 목록\n"
     "/add URL 이름 - 사이트 추가\n"
     "/remove 이름 - 사이트 삭제\n"
@@ -136,6 +137,36 @@ def handle_stop(chat_id: int, username: str = ""):
     name = f"@{username}" if username else str(chat_id)
     log.info("구독 취소: %s", name)
     send_message(chat_id, "구독이 취소되었습니다.\n언제든지 /start 로 다시 구독할 수 있습니다.")
+
+
+def handle_weather_query(chat_id: int):
+    from weather import get_location_config, fetch_weather, fetch_air_quality, format_weather_message
+    from config import WEATHER_API_KEY
+
+    if not WEATHER_API_KEY:
+        send_message(chat_id, "❌ 날씨 API 키가 설정되지 않았습니다.")
+        return
+
+    send_message(chat_id, "🔍 날씨 조회 중...")
+    loc = get_location_config()
+    weather, air = {}, {}
+
+    try:
+        weather = fetch_weather(loc["nx"], loc["ny"], WEATHER_API_KEY)
+    except Exception as e:
+        log.error("날씨 조회 실패: %s", e, exc_info=True)
+
+    try:
+        air = fetch_air_quality(loc["station"], WEATHER_API_KEY)
+    except Exception as e:
+        log.error("대기질 조회 실패: %s", e, exc_info=True)
+
+    if not weather and not air:
+        send_message(chat_id, "❌ 날씨 정보를 가져올 수 없습니다. 잠시 후 다시 시도해주세요.")
+        return
+
+    msg = format_weather_message(loc["display"], weather, air)
+    send_message(chat_id, msg)
 
 
 def handle_list(chat_id: int):
@@ -278,9 +309,11 @@ def dispatch(chat_id: int, text: str, username: str = ""):
     args = parts[1] if len(parts) > 1 else ""
 
     public_handlers = {
-        "/start": lambda: handle_start(chat_id, username),
-        "/stop": lambda: handle_stop(chat_id, username),
-        "/help": lambda: send_message(chat_id, HELP_TEXT),
+        "/start":   lambda: handle_start(chat_id, username),
+        "/stop":    lambda: handle_stop(chat_id, username),
+        "/날씨":    lambda: handle_weather_query(chat_id),
+        "/weather": lambda: handle_weather_query(chat_id),
+        "/help":    lambda: send_message(chat_id, HELP_TEXT),
     }
     admin_handlers = {
         "/list": lambda: handle_list(chat_id),

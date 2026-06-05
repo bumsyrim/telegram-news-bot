@@ -24,9 +24,10 @@ class BaseSource(ABC):
                 ]
     """
 
-    def __init__(self, url: str, name: str):
+    def __init__(self, url: str, name: str, tag: str = ""):
         self.url = url
         self.name = name
+        self.tag = tag
 
     @abstractmethod
     def fetch(self) -> List[Dict]:

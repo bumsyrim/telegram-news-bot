@@ -42,15 +42,24 @@ USERS_FILE = Path("users.json")
 
 
 # ── sources.json 로드 ──────────────────────────────────
+def _auto_tag(name: str) -> str:
+    """소스 이름에서 태그 자동 생성: 짧은 대문자 단어 우선, 없으면 첫 단어"""
+    for word in name.split():
+        if word.isupper() and 1 <= len(word) <= 5:
+            return word
+    return name.split()[0] if name else name
+
+
 def _build_sources() -> list:
     if not SOURCES_FILE.exists():
-        return [BrunchSource(url="https://brunch.co.kr/@sungdairi", name="브런치 AI Weekly")]
+        return [BrunchSource(url="https://brunch.co.kr/@sungdairi", name="브런치 AI Weekly", tag="AI")]
     data = json.loads(SOURCES_FILE.read_text(encoding="utf-8"))
     sources = []
     for s in data.get("sources", []):
+        tag = s.get("tag") or _auto_tag(s["name"])
         if s.get("type") == "brunch":
-            sources.append(BrunchSource(url=s["url"], name=s["name"]))
-    return sources or [BrunchSource(url="https://brunch.co.kr/@sungdairi", name="브런치 AI Weekly")]
+            sources.append(BrunchSource(url=s["url"], name=s["name"], tag=tag))
+    return sources or [BrunchSource(url="https://brunch.co.kr/@sungdairi", name="브런치 AI Weekly", tag="AI")]
 
 
 def _get_interval() -> int:
@@ -126,10 +135,11 @@ def send_telegram(text: str):
     log.info("텔레그램 발송 완료 (%d명 중 %d명 성공)", len(subscribers), len(subscribers) - failed)
 
 
-def format_message(title: str, summary: str, url: str, source_name: str) -> str:
+def format_message(title: str, summary: str, url: str, source_name: str, tag: str = "") -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    tag_prefix = f"[{tag}] " if tag else ""
     return (
-        f"📰 <b>{title}</b>\n"
+        f"{tag_prefix}📰 <b>{title}</b>\n"
         f"🔗 <a href='{url}'>원문 보기</a>\n"
         f"<i>출처: {source_name} | {now}</i>"
     )
@@ -152,7 +162,7 @@ def check_and_send():
                 log.info(f"새 글 발견: {article['title']}")
 
                 message = format_message(
-                     article["title"], "", article["url"], source.name
+                    article["title"], "", article["url"], source.name, source.tag
                 )
                 send_telegram(message)
 
