@@ -106,8 +106,10 @@ def summarize(title: str, content: str, url: str) -> str:
 def _load_subscribers() -> list:
     if USERS_FILE.exists():
         data = json.loads(USERS_FILE.read_text(encoding="utf-8"))
-        subs = data.get("subscribers", [])
-        if subs:
+        subs = data.get("subscribers", {})
+        if isinstance(subs, dict):
+            return [int(uid) for uid in subs.keys()] if subs else [TELEGRAM_CHAT_ID]
+        if isinstance(subs, list) and subs:
             return subs
     return [TELEGRAM_CHAT_ID]
 

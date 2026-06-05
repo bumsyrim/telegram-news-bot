@@ -225,63 +225,100 @@ def format_weather_message(display: str, weather: dict, air: dict) -> str:
     return "\n".join(lines)
 
 
-# ── 발송 ──────────────────────────────────────────────────────────
+# ── 구독자별 위치 조회 ────────────────────────────────────────────
 
-def _load_subscribers(fallback_id) -> list:
+def get_subscriber_location(chat_id: int) -> dict:
+    """구독자의 개인 위치 반환. 미설정 시 sources.json 전역 설정(서울)."""
     if USERS_FILE.exists():
         data = json.loads(USERS_FILE.read_text(encoding="utf-8"))
-        subs = data.get("subscribers", [])
-        if subs:
-            return subs
-    return [int(fallback_id)]
+        subs = data.get("subscribers", {})
+        if isinstance(subs, dict):
+            user = subs.get(str(chat_id), {})
+            loc_key = user.get("location")
+            if loc_key and loc_key in LOCATION_MAP:
+                return LOCATION_MAP[loc_key]
+    return get_location_config()
 
+
+def _load_subscribers_with_location(fallback_id) -> list:
+    """구독자 목록을 (chat_id, loc_config) 리스트로 반환."""
+    default_loc = get_location_config()
+
+    if USERS_FILE.exists():
+        data = json.loads(USERS_FILE.read_text(encoding="utf-8"))
+        subs = data.get("subscribers", {})
+
+        # 구형 포맷(리스트) 호환
+        if isinstance(subs, list):
+            return [(int(uid), default_loc) for uid in subs] if subs else [(int(fallback_id), default_loc)]
+
+        if isinstance(subs, dict) and subs:
+            result = []
+            for uid, user_data in subs.items():
+                loc_key = user_data.get("location")
+                loc = LOCATION_MAP.get(loc_key, default_loc) if loc_key else default_loc
+                result.append((int(uid), loc))
+            return result
+
+    return [(int(fallback_id), default_loc)]
+
+
+# ── 발송 ──────────────────────────────────────────────────────────
 
 def send_weather_report():
+    from collections import defaultdict
     from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, WEATHER_API_KEY
 
     if not WEATHER_API_KEY:
         log.error("WEATHER_API_KEY 가 설정되지 않았습니다.")
         return
 
-    loc = get_location_config()
-    log.info("날씨 조회: %s (nx=%s ny=%s station=%s)", loc["display"], loc["nx"], loc["ny"], loc["station"])
+    subscribers = _load_subscribers_with_location(TELEGRAM_CHAT_ID)
+    log.info("날씨 알림 대상: %d명", len(subscribers))
 
-    weather, air = {}, {}
+    # 같은 위치 구독자끼리 묶어 API 호출 최소화
+    location_groups: dict = defaultdict(list)
+    for chat_id, loc in subscribers:
+        group_key = (loc["nx"], loc["ny"], loc["station"])
+        location_groups[group_key].append((chat_id, loc))
 
-    try:
-        weather = fetch_weather(loc["nx"], loc["ny"], WEATHER_API_KEY)
-        log.info("날씨 조회 성공: %s", weather)
-    except Exception as e:
-        log.error("날씨 조회 실패: %s", e, exc_info=True)
-
-    try:
-        air = fetch_air_quality(loc["station"], WEATHER_API_KEY)
-        log.info("대기질 조회 성공: %s", air)
-    except Exception as e:
-        log.error("대기질 조회 실패: %s", e, exc_info=True)
-
-    if not weather and not air:
-        log.error("날씨/대기질 모두 조회 실패, 발송 중단")
-        return
-
-    msg = format_weather_message(loc["display"], weather, air)
-    subscribers = _load_subscribers(TELEGRAM_CHAT_ID)
     api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    total_sent = total_failed = 0
 
-    failed = 0
-    for chat_id in subscribers:
+    for (nx, ny, station), users in location_groups.items():
+        loc = users[0][1]
+        log.info("날씨 조회: %s (%d명)", loc["display"], len(users))
+
+        weather, air = {}, {}
         try:
-            resp = requests.post(
-                api_url,
-                json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
-                timeout=10,
-            )
-            resp.raise_for_status()
+            weather = fetch_weather(nx, ny, WEATHER_API_KEY)
         except Exception as e:
-            log.warning("발송 실패 (chat_id=%s): %s", chat_id, e)
-            failed += 1
+            log.error("날씨 조회 실패 (%s): %s", loc["display"], e, exc_info=True)
+        try:
+            air = fetch_air_quality(station, WEATHER_API_KEY)
+        except Exception as e:
+            log.error("대기질 조회 실패 (%s): %s", station, e, exc_info=True)
 
-    log.info("날씨 알림 발송: %d명 중 %d명 성공", len(subscribers), len(subscribers) - failed)
+        if not weather and not air:
+            log.warning("%s 날씨/대기질 모두 실패, 건너뜀", loc["display"])
+            continue
+
+        msg = format_weather_message(loc["display"], weather, air)
+
+        for chat_id, _ in users:
+            try:
+                resp = requests.post(
+                    api_url,
+                    json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                total_sent += 1
+            except Exception as e:
+                log.warning("발송 실패 (chat_id=%s): %s", chat_id, e)
+                total_failed += 1
+
+    log.info("날씨 알림 완료: 성공 %d명 / 실패 %d명", total_sent, total_failed)
 
 
 # ── 진입점 ─────────────────────────────────────────────────────────

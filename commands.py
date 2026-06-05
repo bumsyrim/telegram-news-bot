@@ -23,7 +23,7 @@ USERS_FILE = Path("users.json")
 # 누구나 사용 가능한 명령어 (NFC 정규화된 소문자로 저장)
 PUBLIC_COMMANDS = {
     unicodedata.normalize("NFC", c)
-    for c in {"/start", "/stop", "/날씨", "/weather"}
+    for c in {"/start", "/stop", "/날씨", "/weather", "/location"}
 }
 
 log = logging.getLogger(__name__)
@@ -32,12 +32,12 @@ HELP_TEXT = (
     "사용 가능한 명령어:\n"
     "/start - 뉴스 구독 등록\n"
     "/stop - 뉴스 구독 취소\n"
-    "/날씨 (또는 /weather) - 현재 날씨/미세먼지 조회\n"
+    "/날씨 (또는 /weather) - 내 위치 기준 날씨/미세먼지 조회\n"
+    "/location 위치명 - 내 날씨 위치 변경\n"
     "/list - 등록된 사이트 목록\n"
     "/add URL 이름 - 사이트 추가\n"
     "/remove 이름 - 사이트 삭제\n"
     "/interval 숫자 - 실행 주기 변경 (분)\n"
-    "/location 위치명 - 날씨 위치 변경\n"
     "/run - 즉시 뉴스 체크 실행"
 )
 
@@ -55,8 +55,14 @@ ADMIN_HELP_TEXT = (
 
 def load_users() -> dict:
     if USERS_FILE.exists():
-        return json.loads(USERS_FILE.read_text(encoding="utf-8"))
-    return {"subscribers": []}
+        data = json.loads(USERS_FILE.read_text(encoding="utf-8"))
+        subs = data.get("subscribers", {})
+        # 구형 포맷(리스트) → 신형(딕셔너리) 자동 마이그레이션
+        if isinstance(subs, list):
+            data["subscribers"] = {str(uid): {} for uid in subs}
+            save_users(data)
+        return data
+    return {"subscribers": {}}
 
 
 def save_users(data: dict):
@@ -118,25 +124,30 @@ def update_workflow_cron(minutes: int) -> bool:
 
 def handle_start(chat_id: int, username: str = ""):
     data = load_users()
-    if chat_id in data["subscribers"]:
-        send_message(chat_id, "이미 구독 중입니다.\n/stop 으로 구독을 취소할 수 있습니다.")
+    key = str(chat_id)
+    if key in data["subscribers"]:
+        loc = data["subscribers"][key].get("location", "서울 (기본값)")
+        send_message(chat_id, f"이미 구독 중입니다. (날씨 위치: {loc})\n/stop 으로 구독을 취소할 수 있습니다.")
         return
-    data["subscribers"].append(chat_id)
+    data["subscribers"][key] = {}
     save_users(data)
     name = f"@{username}" if username else str(chat_id)
     log.info("구독 등록: %s", name)
     send_message(
         chat_id,
-        f"✅ 구독이 완료되었습니다!\n새 글이 발행되면 알림을 보내드립니다.\n\n/stop 으로 구독을 취소할 수 있습니다.",
+        "✅ 구독이 완료되었습니다!\n새 글이 발행되면 알림을 보내드립니다.\n\n"
+        "/location 위치명 으로 날씨 위치를 설정할 수 있습니다.\n"
+        "/stop 으로 구독을 취소할 수 있습니다.",
     )
 
 
 def handle_stop(chat_id: int, username: str = ""):
     data = load_users()
-    if chat_id not in data["subscribers"]:
+    key = str(chat_id)
+    if key not in data["subscribers"]:
         send_message(chat_id, "구독 중이 아닙니다.\n/start 로 구독할 수 있습니다.")
         return
-    data["subscribers"].remove(chat_id)
+    del data["subscribers"][key]
     save_users(data)
     name = f"@{username}" if username else str(chat_id)
     log.info("구독 취소: %s", name)
@@ -144,7 +155,7 @@ def handle_stop(chat_id: int, username: str = ""):
 
 
 def handle_weather_query(chat_id: int):
-    from weather import get_location_config, fetch_weather, fetch_air_quality, format_weather_message
+    from weather import get_subscriber_location, fetch_weather, fetch_air_quality, format_weather_message
     from config import WEATHER_API_KEY
 
     if not WEATHER_API_KEY:
@@ -152,7 +163,7 @@ def handle_weather_query(chat_id: int):
         return
 
     send_message(chat_id, "🔍 날씨 조회 중...")
-    loc = get_location_config()
+    loc = get_subscriber_location(chat_id)
     weather, air = {}, {}
 
     try:
@@ -247,25 +258,30 @@ def handle_interval(chat_id: int, args: str):
 def handle_location(chat_id: int, args: str):
     from weather import LOCATION_MAP
 
+    # 구독 여부 확인
+    user_data_store = load_users()
+    key = str(chat_id)
+    if key not in user_data_store["subscribers"]:
+        send_message(chat_id, "먼저 /start 로 구독하신 후 위치를 설정할 수 있습니다.")
+        return
+
     query = args.strip()
     if not query:
-        data = load_sources()
-        current = data.get("location", "서울")
+        current = user_data_store["subscribers"][key].get("location", "서울 (기본값)")
         sample = ["서울", "서울 강남구", "서울 마포구", "부산", "대구", "인천", "대전", "광주"]
         send_message(
             chat_id,
-            f"📍 현재 위치: <b>{current}</b>\n\n"
+            f"📍 내 현재 위치: <b>{current}</b>\n\n"
             f"사용법: /location 위치명\n"
             f"예시: {' / '.join(sample)}\n\n"
             f"서울 각 구(강남구, 마포구 등) 및 주요 도시 지원",
         )
         return
 
-    # 정확히 일치하는 키 우선
+    # 위치 검색 — 정확히 일치 우선, 부분 일치 fallback
     if query in LOCATION_MAP:
         matched = query
     else:
-        # 부분 일치 검색
         candidates = [k for k in LOCATION_MAP if query in k]
         if not candidates:
             send_message(chat_id, f"'{query}' 위치를 찾을 수 없습니다.\n/location 으로 지원 위치 목록을 확인하세요.")
@@ -275,12 +291,12 @@ def handle_location(chat_id: int, args: str):
             return
         matched = candidates[0]
 
-    data = load_sources()
-    data["location"] = matched
-    save_sources(data)
+    # 개인 위치 저장
+    user_data_store["subscribers"][key]["location"] = matched
+    save_users(user_data_store)
     display = LOCATION_MAP[matched]["display"]
-    log.info("위치 변경: %s", display)
-    send_message(chat_id, f"📍 날씨 위치가 <b>{display}</b>으로 변경되었습니다.\n내일 오전 7시부터 적용됩니다.")
+    log.info("위치 변경: chat_id=%s → %s", chat_id, display)
+    send_message(chat_id, f"📍 내 날씨 위치가 <b>{display}</b>으로 변경되었습니다.\n/날씨 로 바로 확인해보세요.")
 
 
 def handle_run(chat_id: int):
@@ -320,19 +336,19 @@ def dispatch(chat_id: int, text: str, username: str = ""):
     args = parts[1] if len(parts) > 1 else ""
 
     public_handlers = {
-        "/start":   lambda: handle_start(chat_id, username),
-        "/stop":    lambda: handle_stop(chat_id, username),
-        "/날씨":    lambda: handle_weather_query(chat_id),
-        "/weather": lambda: handle_weather_query(chat_id),
-        "/help":    lambda: send_message(chat_id, HELP_TEXT),
+        "/start":    lambda: handle_start(chat_id, username),
+        "/stop":     lambda: handle_stop(chat_id, username),
+        "/날씨":     lambda: handle_weather_query(chat_id),
+        "/weather":  lambda: handle_weather_query(chat_id),
+        "/location": lambda: handle_location(chat_id, args),
+        "/help":     lambda: send_message(chat_id, HELP_TEXT),
     }
     admin_handlers = {
-        "/list": lambda: handle_list(chat_id),
-        "/add": lambda: handle_add(chat_id, args),
-        "/remove": lambda: handle_remove(chat_id, args),
+        "/list":     lambda: handle_list(chat_id),
+        "/add":      lambda: handle_add(chat_id, args),
+        "/remove":   lambda: handle_remove(chat_id, args),
         "/interval": lambda: handle_interval(chat_id, args),
-        "/location": lambda: handle_location(chat_id, args),
-        "/run": lambda: handle_run(chat_id),
+        "/run":      lambda: handle_run(chat_id),
     }
 
     if cmd in public_handlers:
