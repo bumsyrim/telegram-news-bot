@@ -7,3 +7,4 @@ lxml>=5.0.0
 selenium>=4.0.0
 webdriver-manager>=4.0.0
 yfinance>=0.2.0
+curl_cffi>=0.6.0

@@ -1,0 +1,18 @@
+services:
+  - type: worker
+    name: telegram-commands-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python commands.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: WEATHER_API_KEY
+        sync: false
+      - key: CHECK_INTERVAL_MINUTES
+        value: "60"
+    autoDeploy: true
