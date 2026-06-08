@@ -93,19 +93,26 @@ class BrunchSource(BaseSource):
             if not title:
                 return None
 
-            content = ""
-            for sel in ["div.wrap_body", "div.article_view", "article"]:
+            published_date = ""
+            for sel in ["time", ".wrap_info .etc_date", ".article-sub-info time", "span.txt_date", ".article_date"]:
                 els = driver.find_elements(By.CSS_SELECTOR, sel)
                 if els:
-                    content = els[0].text.strip()
-                    break
+                    dt = els[0].get_attribute("datetime") or ""
+                    if dt:
+                        published_date = dt[:10]
+                        break
+                    text = els[0].text.strip()
+                    if text:
+                        published_date = text
+                        break
 
             uid = hashlib.md5(url.encode()).hexdigest()[:12]
             return {
                 "id": uid,
                 "title": title,
-                "content": content[:3000] if content else title,
+                "content": title,
                 "url": url,
+                "published_date": published_date,
             }
         except Exception as e:
             log.warning(f"글 로드 실패 ({url}): {e}")

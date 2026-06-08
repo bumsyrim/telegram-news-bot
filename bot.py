@@ -136,18 +136,10 @@ def send_telegram(text: str):
     log.info("텔레그램 발송 완료 (%d명 중 %d명 성공)", len(subscribers), len(subscribers) - failed)
 
 
-def format_message(title: str, content: str, url: str, tag: str = "") -> str:
-    lines = []
-    if tag:
-        lines.append(f"<b>[{tag}]</b>")
-    lines.append(title)
-    if content:
-        preview = content[:200].strip()
-        if len(content) > 200:
-            preview += "..."
-        lines += ["", f"- {preview}"]
-    lines += ["", f"- 🔗 <a href='{url}'>원문 보기</a>"]
-    return "\n".join(lines)
+def format_message(url: str, tag: str = "", published_date: str = "") -> str:
+    date_str = published_date or "날짜 미상"
+    source_line = f"출처: {tag} | {date_str}" if tag else f"출처: {date_str}"
+    return f"{url}\n\n{source_line}"
 
 # ── 메인 체크 루프 ─────────────────────────────────────
 def check_and_send():
@@ -167,7 +159,7 @@ def check_and_send():
                 log.info(f"새 글 발견: {article['title']}")
 
                 message = format_message(
-                    article["title"], article.get("content", ""), article["url"], source.tag
+                    article["url"], source.tag, article.get("published_date", "날짜 미상")
                 )
                 send_telegram(message)
 

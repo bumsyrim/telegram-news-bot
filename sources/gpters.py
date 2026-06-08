@@ -44,15 +44,22 @@ class GptersSource(BaseSource):
             WebDriverWait(driver, 15).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "a[href]"))
             )
-            time.sleep(2)
+            time.sleep(5)
 
+            # execute_script avoids StaleElementReferenceException from SPA re-renders
+            all_hrefs = driver.execute_script(
+                "return Array.from(document.querySelectorAll('a[href]')).map(a => a.href)"
+            )
+            seen_urls = set()
             links = []
-            for a in driver.find_elements(By.CSS_SELECTOR, "a[href]"):
-                href = a.get_attribute("href") or ""
-                if "gpters.org" in href and "/news/" in href:
-                    path = href.split("gpters.org")[-1]
-                    if path.count("/") >= 2 and href not in links:
-                        links.append(href)
+            for href in (all_hrefs or []):
+                if (
+                    href
+                    and "gpters.org/news/post/" in href
+                    and href not in seen_urls
+                ):
+                    seen_urls.add(href)
+                    links.append(href)
 
             log.info("지피터스에서 링크 %d개 발견", len(links))
 
@@ -80,28 +87,34 @@ class GptersSource(BaseSource):
             )
             time.sleep(1)
 
-            title = ""
-            els = driver.find_elements(By.CSS_SELECTOR, "h1")
-            if els:
-                title = els[0].text.strip()
+            title_els = driver.execute_script(
+                "return Array.from(document.querySelectorAll('h1')).map(e => e.innerText.trim())"
+            )
+            title = next((t for t in (title_els or []) if t), "")
             if not title:
                 return None
 
-            content = ""
-            for sel in ["article", "div.content", "div.post-content", "div.prose", "main"]:
-                els = driver.find_elements(By.CSS_SELECTOR, sel)
-                if els:
-                    text = els[0].text.strip()
-                    if text and text != title:
-                        content = text
-                        break
+            date_result = driver.execute_script("""
+                var el = document.querySelector('time');
+                if (el) return el.getAttribute('datetime') || el.innerText.trim();
+                var els = document.querySelectorAll('[class*="date"], [class*="time"], [class*="publish"]');
+                for (var i = 0; i < els.length; i++) {
+                    var t = els[i].innerText.trim();
+                    if (t) return t;
+                }
+                return null;
+            """)
+            published_date = ""
+            if date_result:
+                published_date = str(date_result).strip()[:20]
 
             uid = hashlib.md5(url.encode()).hexdigest()[:12]
             return {
                 "id": uid,
                 "title": title,
-                "content": content,
+                "content": title,
                 "url": url,
+                "published_date": published_date,
             }
         except Exception as e:
             log.warning("지피터스 글 로드 실패 (%s): %s", url, e)
