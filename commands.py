@@ -26,7 +26,7 @@ ENV_FILE = Path(".env")
 # 누구나 사용 가능한 명령어 (NFC 정규화된 소문자로 저장)
 PUBLIC_COMMANDS = {
     unicodedata.normalize("NFC", c)
-    for c in {"/start", "/stop", "/날씨", "/weather", "/location", "/코스피", "/kospi", "/금융", "/finance", "/help"}
+    for c in {"/start", "/stop", "/날씨", "/weather", "/location", "/코스피", "/kospi", "/금융", "/finance", "/help", "/list"}
 }
 
 log = logging.getLogger(__name__)
@@ -35,6 +35,7 @@ _COMMON_HELP = (
     "[📋 공통 명령어]\n"
     "/start - 뉴스 구독 등록\n"
     "/stop - 뉴스 구독 취소\n"
+    "/list - 등록된 사이트 목록\n"
     "/날씨 - 내 위치 기준 날씨 조회\n"
     "/location 위치명 - 날씨 위치 변경\n"
     "/코스피 - 코스피 지수 조회\n"
@@ -46,6 +47,7 @@ HELP_TEXT = (
     "[📋 사용 가능한 명령어]\n"
     "/start - 뉴스 구독 등록\n"
     "/stop - 뉴스 구독 취소\n"
+    "/list - 등록된 사이트 목록\n"
     "/날씨 - 내 위치 기준 날씨 조회\n"
     "/location 위치명 - 날씨 위치 변경\n"
     "/코스피 - 코스피 지수 조회\n"
@@ -264,11 +266,19 @@ def handle_kospi_query(chat_id: int):
 
 def handle_list(chat_id: int):
     src = load_sources()
-    usr = load_users()
+    admin = is_admin(chat_id)
     if not src["sources"]:
-        send_message(chat_id, "등록된 사이트가 없습니다.\n/add URL 이름 으로 추가하세요.")
+        msg = "등록된 사이트가 없습니다."
+        if admin:
+            msg += "\n/add URL 이름 으로 추가하세요."
+        send_message(chat_id, msg)
         return
-    lines = [f"📋 <b>등록된 사이트 목록</b> (주기: {src['interval_minutes']}분 / 구독자: {len(usr['subscribers'])}명)\n"]
+    if admin:
+        usr = load_users()
+        header = f"📋 <b>등록된 사이트 목록</b> (주기: {src['interval_minutes']}분 / 구독자: {len(usr['subscribers'])}명)\n"
+    else:
+        header = "📋 <b>등록된 사이트 목록</b>\n"
+    lines = [header]
     for i, s in enumerate(src["sources"], 1):
         lines.append(f"{i}. <b>{s['name']}</b>\n   {s['url']}")
     send_message(chat_id, "\n".join(lines))
@@ -483,9 +493,9 @@ def dispatch(chat_id: int, text: str, username: str = ""):
         N("/금융"):     lambda: handle_finance_query(chat_id),
         N("/finance"):  lambda: handle_finance_query(chat_id),
         N("/help"):     lambda: send_message(chat_id, ADMIN_HELP_TEXT if is_admin(chat_id) else HELP_TEXT),
+        N("/list"):     lambda: handle_list(chat_id),
     }
     admin_handlers = {
-        N("/list"):        lambda: handle_list(chat_id),
         N("/add"):         lambda: handle_add(chat_id, args),
         N("/remove"):      lambda: handle_remove(chat_id, args),
         N("/interval"):    lambda: handle_interval(chat_id, args),
