@@ -8,11 +8,13 @@ import logging
 import re
 import subprocess
 import sys
+import threading
 import time
 import unicodedata
 from pathlib import Path
 
 import requests
+import schedule
 
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
@@ -502,10 +504,44 @@ def dispatch(chat_id: int, text: str, username: str = ""):
         send_message(chat_id, f"알 수 없는 명령어입니다.\n\n{ADMIN_HELP_TEXT if is_admin(chat_id) else '/start 로 구독할 수 있습니다.'}")
 
 
+# ── 내장 스케줄러 ────────────────────────────────────────
+
+def _kst_to_local(kst_hour: int, kst_minute: int = 0) -> str:
+    """KST 시각을 로컬 머신 시각으로 변환해 'HH:MM' 반환."""
+    local_utc_offset_hours = -time.timezone / 3600  # DST 미적용 UTC 오프셋
+    h = int((kst_hour - 9 + local_utc_offset_hours) % 24)
+    return f"{h:02d}:{kst_minute:02d}"
+
+
+def _morning_report():
+    log.info("아침 리포트 실행 시작")
+    try:
+        from weather import send_weather_report
+        send_weather_report()
+    except Exception as e:
+        log.error("날씨 리포트 오류: %s", e, exc_info=True)
+    try:
+        from market import send_market_report
+        send_market_report()
+    except Exception as e:
+        log.error("금융 리포트 오류: %s", e, exc_info=True)
+    log.info("아침 리포트 실행 완료")
+
+
+def _run_scheduler():
+    fire_at = _kst_to_local(7, 0)
+    log.info("스케줄러 시작: 매일 %s (로컬) = 07:00 KST", fire_at)
+    schedule.every().day.at(fire_at).do(_morning_report)
+    while True:
+        schedule.run_pending()
+        time.sleep(30)
+
+
 # ── Long-polling 루프 ─────────────────────────────────────
 
 def run_polling():
     log.info("텔레그램 명령어 봇 시작 (관리자 ID: %s)", TELEGRAM_CHAT_ID)
+    threading.Thread(target=_run_scheduler, daemon=True, name="scheduler").start()
     offset = None
     while True:
         try:
