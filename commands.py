@@ -19,6 +19,7 @@ from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 SOURCES_FILE = Path("sources.json")
 WORKFLOW_FILE = Path(".github/workflows/run_bot.yml")
 USERS_FILE = Path("users.json")
+ENV_FILE = Path(".env")
 
 # 누구나 사용 가능한 명령어 (NFC 정규화된 소문자로 저장)
 PUBLIC_COMMANDS = {
@@ -57,8 +58,44 @@ ADMIN_HELP_TEXT = (
     "/remove 이름 - 사이트 삭제\n"
     "/interval 숫자 - 실행 주기 변경\n"
     "/run - 즉시 뉴스 체크 실행\n"
+    "/subscribers - 구독자 목록 조회\n"
+    "/admins - 관리자 목록 조회\n"
+    "/promote chat_id - 관리자 추가\n"
+    "/demote chat_id - 관리자 권한 제거\n"
     "\n"
 ) + _COMMON_HELP
+
+
+# ── 관리자 목록 읽기/쓰기 (.env ADMIN_IDS) ───────────────
+
+def load_admin_ids() -> set:
+    """TELEGRAM_CHAT_ID + .env의 ADMIN_IDS를 합쳐 반환. 매번 파일을 직접 읽어 최신값 반영."""
+    ids = {str(TELEGRAM_CHAT_ID)}
+    if ENV_FILE.exists():
+        for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("ADMIN_IDS="):
+                value = line[len("ADMIN_IDS="):].strip()
+                ids.update(v.strip() for v in value.split(",") if v.strip())
+    return ids
+
+
+def save_admin_ids(ids: set):
+    """TELEGRAM_CHAT_ID를 제외한 추가 관리자 ID를 .env의 ADMIN_IDS에 저장."""
+    to_store = ids - {str(TELEGRAM_CHAT_ID)}
+    value = ",".join(sorted(to_store))
+    if not ENV_FILE.exists():
+        return
+    content = ENV_FILE.read_text(encoding="utf-8")
+    if re.search(r"^ADMIN_IDS=", content, re.MULTILINE):
+        new_content = re.sub(r"^ADMIN_IDS=.*$", f"ADMIN_IDS={value}", content, flags=re.MULTILINE)
+    else:
+        new_content = content.rstrip() + f"\nADMIN_IDS={value}\n"
+    ENV_FILE.write_text(new_content, encoding="utf-8")
+
+
+def is_admin(chat_id: int) -> bool:
+    return str(chat_id) in load_admin_ids()
 
 
 # ── users.json 읽기/쓰기 ─────────────────────────────────
@@ -360,6 +397,64 @@ def handle_run(chat_id: int):
         send_message(chat_id, f"❌ 실행 오류: {e}")
 
 
+def handle_subscribers(chat_id: int):
+    data = load_users()
+    subs = data.get("subscribers", {})
+    if not subs:
+        send_message(chat_id, "현재 구독자가 없습니다.")
+        return
+    lines = [f"👥 <b>구독자 목록</b> (총 {len(subs)}명)\n"]
+    for uid, info in subs.items():
+        loc = info.get("location", "기본값")
+        lines.append(f"• <code>{uid}</code>  📍{loc}")
+    send_message(chat_id, "\n".join(lines))
+
+
+def handle_admins(chat_id: int):
+    ids = load_admin_ids()
+    lines = [f"👑 <b>관리자 목록</b> (총 {len(ids)}명)\n"]
+    for uid in sorted(ids):
+        tag = " (기본 관리자)" if uid == str(TELEGRAM_CHAT_ID) else ""
+        lines.append(f"• <code>{uid}</code>{tag}")
+    send_message(chat_id, "\n".join(lines))
+
+
+def handle_promote(chat_id: int, args: str):
+    target = args.strip()
+    if not target.lstrip("-").isdigit():
+        send_message(chat_id, "사용법: /promote chat_id\n예: /promote 123456789")
+        return
+    if target == str(TELEGRAM_CHAT_ID):
+        send_message(chat_id, "기본 관리자는 이미 최고 권한을 가지고 있습니다.")
+        return
+    ids = load_admin_ids()
+    if target in ids:
+        send_message(chat_id, f"<code>{target}</code> 은(는) 이미 관리자입니다.")
+        return
+    ids.add(target)
+    save_admin_ids(ids)
+    log.info("관리자 추가: %s (by %s)", target, chat_id)
+    send_message(chat_id, f"✅ <code>{target}</code> 을(를) 관리자로 추가했습니다.")
+
+
+def handle_demote(chat_id: int, args: str):
+    target = args.strip()
+    if not target.lstrip("-").isdigit():
+        send_message(chat_id, "사용법: /demote chat_id\n예: /demote 123456789")
+        return
+    if target == str(TELEGRAM_CHAT_ID):
+        send_message(chat_id, "❌ 기본 관리자는 권한을 제거할 수 없습니다.")
+        return
+    ids = load_admin_ids()
+    if target not in ids:
+        send_message(chat_id, f"<code>{target}</code> 은(는) 관리자가 아닙니다.")
+        return
+    ids.discard(target)
+    save_admin_ids(ids)
+    log.info("관리자 제거: %s (by %s)", target, chat_id)
+    send_message(chat_id, f"🗑️ <code>{target}</code> 의 관리자 권한을 제거했습니다.")
+
+
 # ── 명령어 디스패치 ───────────────────────────────────────
 
 def _parse_cmd(text: str) -> str:
@@ -385,14 +480,18 @@ def dispatch(chat_id: int, text: str, username: str = ""):
         N("/kospi"):    lambda: handle_kospi_query(chat_id),
         N("/금융"):     lambda: handle_finance_query(chat_id),
         N("/finance"):  lambda: handle_finance_query(chat_id),
-        N("/help"):     lambda: send_message(chat_id, ADMIN_HELP_TEXT if str(chat_id) == str(TELEGRAM_CHAT_ID) else HELP_TEXT),
+        N("/help"):     lambda: send_message(chat_id, ADMIN_HELP_TEXT if is_admin(chat_id) else HELP_TEXT),
     }
     admin_handlers = {
-        N("/list"):     lambda: handle_list(chat_id),
-        N("/add"):      lambda: handle_add(chat_id, args),
-        N("/remove"):   lambda: handle_remove(chat_id, args),
-        N("/interval"): lambda: handle_interval(chat_id, args),
-        N("/run"):      lambda: handle_run(chat_id),
+        N("/list"):        lambda: handle_list(chat_id),
+        N("/add"):         lambda: handle_add(chat_id, args),
+        N("/remove"):      lambda: handle_remove(chat_id, args),
+        N("/interval"):    lambda: handle_interval(chat_id, args),
+        N("/run"):         lambda: handle_run(chat_id),
+        N("/subscribers"): lambda: handle_subscribers(chat_id),
+        N("/admins"):      lambda: handle_admins(chat_id),
+        N("/promote"):     lambda: handle_promote(chat_id, args),
+        N("/demote"):      lambda: handle_demote(chat_id, args),
     }
 
     if cmd in public_handlers:
@@ -400,8 +499,7 @@ def dispatch(chat_id: int, text: str, username: str = ""):
     elif cmd in admin_handlers:
         admin_handlers[cmd]()
     else:
-        is_admin = str(chat_id) == str(TELEGRAM_CHAT_ID)
-        send_message(chat_id, f"알 수 없는 명령어입니다.\n\n{HELP_TEXT if is_admin else '/start 로 구독할 수 있습니다.'}")
+        send_message(chat_id, f"알 수 없는 명령어입니다.\n\n{ADMIN_HELP_TEXT if is_admin(chat_id) else '/start 로 구독할 수 있습니다.'}")
 
 
 # ── Long-polling 루프 ─────────────────────────────────────
@@ -431,16 +529,16 @@ def run_polling():
                     continue
 
                 cmd = _parse_cmd(text)
-                is_admin = str(chat_id) == str(TELEGRAM_CHAT_ID)
+                admin = is_admin(chat_id)
                 is_public_cmd = cmd in PUBLIC_COMMANDS
-                log.debug("cmd=%r is_public=%s is_admin=%s", cmd, is_public_cmd, is_admin)
+                log.debug("cmd=%r is_public=%s is_admin=%s", cmd, is_public_cmd, admin)
 
-                if not is_public_cmd and not is_admin:
+                if not is_public_cmd and not admin:
                     log.warning("관리자 전용 명령어 시도: %s (chat_id=%s)", cmd, chat_id)
                     send_message(chat_id, "❌ 관리자 전용 명령어입니다.\n/start 로 구독할 수 있습니다.")
                     continue
 
-                log.info("명령어 수신: %s (from %s, admin=%s)", text, chat_id, is_admin)
+                log.info("명령어 수신: %s (from %s, admin=%s)", text, chat_id, admin)
                 try:
                     dispatch(chat_id, text, username)
                 except Exception as e:
