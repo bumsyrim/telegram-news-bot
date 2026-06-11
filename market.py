@@ -30,7 +30,7 @@ TICKERS = [
 
 
 def fetch_kospi() -> dict:
-    """KOSPI 지수 실시간 조회 (yfinance ^KS11)."""
+    """KOSPI 지수 + 원/달러 환율 실시간 조회 (yfinance ^KS11, USDKRW=X)."""
     ticker = yf.Ticker("^KS11")
     fi = ticker.fast_info
 
@@ -49,7 +49,7 @@ def fetch_kospi() -> dict:
     change = price - prev
     change_pct = change / prev * 100
 
-    return {
+    result = {
         "price": price,
         "change": change,
         "change_pct": change_pct,
@@ -58,6 +58,20 @@ def fetch_kospi() -> dict:
         "low": fi.day_low,
         "time": last_time,
     }
+
+    # 원/달러 환율 추가 조회
+    try:
+        fx = yf.Ticker("USDKRW=X").fast_info
+        fx_price = fx.last_price
+        fx_prev = fx.previous_close
+        if fx_price and fx_prev and fx_prev != 0:
+            result["usdkrw"] = fx_price
+            result["usdkrw_change"] = fx_price - fx_prev
+            result["usdkrw_change_pct"] = (fx_price - fx_prev) / fx_prev * 100
+    except Exception as e:
+        log.warning("원/달러 조회 실패: %s", e)
+
+    return result
 
 
 def format_kospi_message(data: dict) -> str:
@@ -79,6 +93,15 @@ def format_kospi_message(data: dict) -> str:
         lines.append(f"- 고가: {data['high']:,.0f}")
     if data.get("low") is not None:
         lines.append(f"- 저가: {data['low']:,.0f}")
+    if data.get("usdkrw") is not None:
+        fx = data["usdkrw"]
+        fx_chg = data["usdkrw_change"]
+        fx_pct = data["usdkrw_change_pct"]
+        fx_arrow = "▲" if fx_chg >= 0 else "▼"
+        fx_sign = "+" if fx_chg >= 0 else ""
+        lines.append(
+            f"- 원/달러: {fx:,.0f}원 {fx_arrow} {fx_sign}{fx_chg:.0f}원 ({fx_sign}{fx_pct:.2f}%)"
+        )
     return "\n".join(lines)
 
 
