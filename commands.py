@@ -28,29 +28,37 @@ PUBLIC_COMMANDS = {
 
 log = logging.getLogger(__name__)
 
-HELP_TEXT = (
-    "사용 가능한 명령어:\n"
+_COMMON_HELP = (
+    "[📋 공통 명령어]\n"
     "/start - 뉴스 구독 등록\n"
     "/stop - 뉴스 구독 취소\n"
-    "/날씨 (또는 /weather) - 내 위치 기준 날씨/미세먼지 조회\n"
-    "/location 위치명 - 내 날씨 위치 변경\n"
-    "/코스피 (또는 /kospi) - 코스피 지수 실시간 조회\n"
-    "/금융 (또는 /finance) - 미국 시장 지표 즉시 조회\n"
-    "/list - 등록된 사이트 목록\n"
-    "/add URL 이름 - 사이트 추가\n"
-    "/remove 이름 - 사이트 삭제\n"
-    "/interval 숫자 - 실행 주기 변경 (분)\n"
-    "/run - 즉시 뉴스 체크 실행"
+    "/날씨 - 내 위치 기준 날씨 조회\n"
+    "/location 위치명 - 날씨 위치 변경\n"
+    "/코스피 - 코스피 지수 조회\n"
+    "/금융 - 미국 시장 지표 조회\n"
+    "/help - 도움말"
+)
+
+HELP_TEXT = (
+    "[📋 사용 가능한 명령어]\n"
+    "/start - 뉴스 구독 등록\n"
+    "/stop - 뉴스 구독 취소\n"
+    "/날씨 - 내 위치 기준 날씨 조회\n"
+    "/location 위치명 - 날씨 위치 변경\n"
+    "/코스피 - 코스피 지수 조회\n"
+    "/금융 - 미국 시장 지표 조회\n"
+    "/help - 도움말"
 )
 
 ADMIN_HELP_TEXT = (
-    "관리자 명령어:\n"
+    "[👑 관리자 명령어]\n"
     "/list - 등록된 사이트 목록\n"
     "/add URL 이름 - 사이트 추가\n"
     "/remove 이름 - 사이트 삭제\n"
-    "/interval 숫자 - 실행 주기 변경 (분)\n"
-    "/run - 즉시 뉴스 체크 실행"
-)
+    "/interval 숫자 - 실행 주기 변경\n"
+    "/run - 즉시 뉴스 체크 실행\n"
+    "\n"
+) + _COMMON_HELP
 
 
 # ── users.json 읽기/쓰기 ─────────────────────────────────
@@ -377,7 +385,7 @@ def dispatch(chat_id: int, text: str, username: str = ""):
         N("/kospi"):    lambda: handle_kospi_query(chat_id),
         N("/금융"):     lambda: handle_finance_query(chat_id),
         N("/finance"):  lambda: handle_finance_query(chat_id),
-        N("/help"):     lambda: send_message(chat_id, HELP_TEXT),
+        N("/help"):     lambda: send_message(chat_id, ADMIN_HELP_TEXT if str(chat_id) == str(TELEGRAM_CHAT_ID) else HELP_TEXT),
     }
     admin_handlers = {
         N("/list"):     lambda: handle_list(chat_id),
