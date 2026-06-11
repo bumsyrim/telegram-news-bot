@@ -26,7 +26,7 @@ ENV_FILE = Path(".env")
 # 누구나 사용 가능한 명령어 (NFC 정규화된 소문자로 저장)
 PUBLIC_COMMANDS = {
     unicodedata.normalize("NFC", c)
-    for c in {"/start", "/stop", "/날씨", "/weather", "/location", "/코스피", "/kospi", "/금융", "/finance"}
+    for c in {"/start", "/stop", "/날씨", "/weather", "/location", "/코스피", "/kospi", "/금융", "/finance", "/help"}
 }
 
 log = logging.getLogger(__name__)
