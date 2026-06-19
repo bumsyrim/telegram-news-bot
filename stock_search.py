@@ -1,10 +1,11 @@
 """
-KRX 코스피/코스닥 종목 검색 모듈
+KRX 코스피/코스닥/ETF 종목 검색 모듈
 - stock_list.json을 읽기만 함 (외부 다운로드 없음)
 - 메모리 내 _code_map, _name_map으로 빠른 검색
 """
 import json
 import logging
+import re
 import unicodedata
 from pathlib import Path
 
@@ -14,21 +15,30 @@ CACHE_FILE = Path("stock_list.json")
 
 _code_map: dict = {}   # "005930" → {"name": "삼성전자", "market": "KOSPI"}
 _name_map: dict = {}   # "삼성전자" → {"code": "005930", "market": "KOSPI"}
+# 공백 제거+소문자 정규화 키 → 원본 name (부분 일치용)
+_norm_map: dict = {}   # "kodex200" → "KODEX 200"
 
 
 def _normalize(s: str) -> str:
     return unicodedata.normalize("NFC", s).strip()
 
 
+def _search_key(s: str) -> str:
+    """공백 제거 + 소문자 변환 (KODEX 200 → kodex200)"""
+    return re.sub(r"\s+", "", unicodedata.normalize("NFC", s)).lower()
+
+
 def _build_maps(stocks: list):
-    global _code_map, _name_map
+    global _code_map, _name_map, _norm_map
     _code_map = {}
     _name_map = {}
+    _norm_map = {}
     for s in stocks:
         code = s["code"]
         name = _normalize(s["name"])
         _code_map[code] = {"name": name, "market": s["market"]}
         _name_map[name] = {"code": code, "market": s["market"]}
+        _norm_map[_search_key(name)] = name
 
 
 def load_stocks():
@@ -46,25 +56,50 @@ def load_stocks():
 
 
 def search_stocks(query: str, limit: int = 5) -> list:
-    """종목명 또는 코드 양방향 검색. 결과: [{"code", "name", "market"}, ...]"""
+    """종목명/코드 양방향 검색. 공백 제거·대소문자 무시 부분 일치 포함."""
     q = _normalize(query)
-    # 코드 완전 일치
+    q_key = _search_key(q)
+
+    # 1) 코드 완전 일치
     if q.isdigit():
         code = q.zfill(6)
         if code in _code_map:
             m = _code_map[code]
             return [{"code": code, "name": m["name"], "market": m["market"]}]
-    # 이름 완전 일치
+
+    # 2) 이름 완전 일치
     if q in _name_map:
         m = _name_map[q]
         return [{"code": m["code"], "name": q, "market": m["market"]}]
-    # 이름 부분 일치
+
+    # 3) 정규화 키 완전 일치 (공백·대소문자 무시)
+    if q_key in _norm_map:
+        name = _norm_map[q_key]
+        m = _name_map[name]
+        return [{"code": m["code"], "name": name, "market": m["market"]}]
+
+    # 4) 부분 일치 (원본 이름, 공백 유지)
     results = []
+    seen = set()
     for name, m in _name_map.items():
         if q in name:
-            results.append({"code": m["code"], "name": name, "market": m["market"]})
+            if m["code"] not in seen:
+                results.append({"code": m["code"], "name": name, "market": m["market"]})
+                seen.add(m["code"])
             if len(results) >= limit:
-                break
+                return results
+
+    # 5) 정규화 키 부분 일치 (공백·대소문자 무시)
+    if len(results) < limit:
+        for norm_name, orig_name in _norm_map.items():
+            if q_key in norm_name:
+                m = _name_map[orig_name]
+                if m["code"] not in seen:
+                    results.append({"code": m["code"], "name": orig_name, "market": m["market"]})
+                    seen.add(m["code"])
+                if len(results) >= limit:
+                    break
+
     return results
 
 
