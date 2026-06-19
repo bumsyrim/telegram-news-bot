@@ -64,3 +64,25 @@ def get_all_subscriptions() -> dict:
 
 def is_subscribed(chat_id: int, code: str) -> bool:
     return code in _load().get(str(chat_id), {})
+
+
+def get_settings(chat_id: int, code: str) -> dict:
+    """종목별 설정 반환. 저장값 없으면 기본값."""
+    info = _load().get(str(chat_id), {}).get(code, {})
+    return {
+        "news_count": info.get("news_count", 5),
+        "board_count": info.get("board_count", 3),
+        "days": info.get("days", 7),
+    }
+
+
+def update_settings(chat_id: int, code: str, **settings) -> bool:
+    """종목별 설정 업데이트 (news_count, board_count, days). 구독 없으면 False."""
+    data = _load()
+    key = str(chat_id)
+    if key not in data or code not in data[key]:
+        return False
+    data[key][code].update(settings)
+    _save(data)
+    log.info("설정 변경: chat_id=%s code=%s %s", chat_id, code, settings)
+    return True

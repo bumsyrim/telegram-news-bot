@@ -68,9 +68,10 @@ def _call_naver_news_api(query: str, display: int) -> list:
     return results
 
 
-def fetch_naver_news(name: str, code: str = "", display: int = 5) -> list:
+def fetch_naver_news(name: str, code: str = "", display: int = 5, days: int = 7) -> list:
     """
     종목명 정확 일치 → 코드 → 앞 7자 순으로 뉴스 검색.
+    최근 days일 이내, 최신순, 최대 display건.
     결과: [{"title", "link", "time"}, ...]
     """
     seen_links: dict = {}
@@ -95,8 +96,8 @@ def fetch_naver_news(name: str, code: str = "", display: int = 5) -> list:
     except Exception as e:
         log.error("네이버 뉴스 조회 실패 (%s): %s", name, e)
 
-    # 최근 7일 필터 + 최신순 정렬 + 최대 5건
-    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    # 최근 N일 필터 + 최신순 정렬 + 최대 display건
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     items = list(seen_links.values())
     items = [i for i in items if i["dt"] is None or i["dt"] >= cutoff]
     items.sort(key=lambda i: i["dt"] or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
@@ -134,9 +135,10 @@ def fetch_naver_board(code: str) -> list:
         return []
 
 
-def collect_and_send(send_fn):
+def collect_and_send(send_fn, news_count: int = 5, board_count: int = 3, days: int = 7):
     """
     구독 종목별 뉴스/토론방 수집 후 새 항목을 send_fn(chat_id, text)으로 발송.
+    사용자별 저장 설정을 우선 적용하고, 없으면 파라미터 기본값 사용.
     30분 간격 스케줄러에서 호출.
     """
     from stock_subscription import get_all_subscriptions
@@ -148,59 +150,55 @@ def collect_and_send(send_fn):
     seen = _load_seen()
     new_seen = set(seen)
 
-    # 종목별 구독 chat_id 목록 정리
-    stock_to_chats: dict = {}
     for chat_id, stocks in all_subs.items():
         for code, info in stocks.items():
-            stock_to_chats.setdefault(code, {"info": info, "chats": []})["chats"].append(chat_id)
+            name = info.get("name", code)
+            u_news = info.get("news_count", news_count)
+            u_board = info.get("board_count", board_count)
+            u_days = info.get("days", days)
 
-    for code, entry in stock_to_chats.items():
-        info = entry["info"]
-        name = info.get("name", code)
-        chat_ids = entry["chats"]
+            news_items = fetch_naver_news(name, code=code, display=u_news, days=u_days)
+            board_items = fetch_naver_board(code)[:u_board]
 
-        news_items = fetch_naver_news(name, code=code, display=5)
-        board_items = fetch_naver_board(code)
+            messages = []
+            for item in news_items:
+                h = _url_hash(item["link"])
+                if h in seen:
+                    continue
+                new_seen.add(h)
+                messages.append(f"[뉴스] {item['title']}\n{item['time']}\n{item['link']}")
 
-        messages = []
-        for item in news_items:
-            h = _url_hash(item["link"])
-            if h in seen:
-                continue
-            new_seen.add(h)
-            messages.append(f"[뉴스] {item['title']}\n{item['time']}\n{item['link']}")
+            for item in board_items:
+                h = _url_hash(item["link"])
+                if h in seen:
+                    continue
+                new_seen.add(h)
+                messages.append(f"[토론방] {item['title']}\n{item['time']}\n{item['link']}")
 
-        for item in board_items[:3]:
-            h = _url_hash(item["link"])
-            if h in seen:
-                continue
-            new_seen.add(h)
-            messages.append(f"[토론방] {item['title']}\n{item['time']}\n{item['link']}")
-
-        if messages:
-            text = f"<b>{name}</b> [{code}]\n\n" + "\n\n".join(messages)
-            for chat_id in chat_ids:
+            if messages:
+                text = f"<b>{name}</b> [{code}]\n\n" + "\n\n".join(messages)
                 try:
                     send_fn(int(chat_id), text)
                 except Exception as e:
                     log.error("종목 뉴스 발송 실패 chat_id=%s: %s", chat_id, e)
-            log.info("종목 뉴스 발송: %s (%s) → %d명, %d건", name, code, len(chat_ids), len(messages))
+                log.info("종목 뉴스 발송: %s (%s) → chat_id=%s, %d건", name, code, chat_id, len(messages))
 
     _save_seen(new_seen)
 
 
-def fetch_news_for_report(code: str, name: str, market: str) -> str:
+def fetch_news_for_report(code: str, name: str, market: str,
+                          news_count: int = 5, board_count: int = 3, days: int = 7) -> str:
     """
     즉시 조회 버튼용: seen 필터 없이 최신 뉴스/토론방 수집 후 메시지 문자열 반환.
     새 글 없으면 None 반환.
     """
-    news_items = fetch_naver_news(name, code=code, display=5)
+    news_items = fetch_naver_news(name, code=code, display=news_count, days=days)
     board_items = fetch_naver_board(code)
 
     messages = []
     for item in news_items:
         messages.append(f"[뉴스] {item['title']}\n{item['time']}\n{item['link']}")
-    for item in board_items[:3]:
+    for item in board_items[:board_count]:
         messages.append(f"[토론방] {item['title']}\n{item['time']}\n{item['link']}")
 
     if not messages:

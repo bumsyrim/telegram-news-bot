@@ -35,10 +35,11 @@ log = logging.getLogger(__name__)
 
 _STOCK_HELP = (
     "\n[📈 종목 검색/구독]\n"
-    "/종목 삼성       - 종목 검색 후 버튼으로 선택\n"
-    "/종목 005930     - 종목코드로 검색\n"
-    "/종목 목록       - 내 구독 종목 확인\n"
-    "/종목 해제 005930 - 구독 해제\n\n"
+    "/종목 삼성            - 종목 검색 후 버튼으로 선택\n"
+    "/종목 005930          - 종목코드로 검색\n"
+    "/종목 목록            - 내 구독 종목 확인\n"
+    "/종목 해제 005930     - 구독 해제\n"
+    "/종목 설정 005930     - 뉴스/토론방 건수·기간 설정\n\n"
     "💡 실시간 팝업 검색 (더 편함):\n"
     "@ptw_aiwkeekly_bot 종목명 또는 코드 입력\n"
     "→ 타이핑하면서 바로 목록 팝업\n"
@@ -499,6 +500,45 @@ def handle_demote(chat_id: int, args: str):
     send_message(chat_id, f"🗑️ <code>{target}</code> 의 관리자 권한을 제거했습니다.")
 
 
+def handle_stock_settings(chat_id: int, code: str):
+    """종목별 뉴스/토론방 건수·기간 설정 메뉴 전송."""
+    s = stock_search.get_by_code(code)
+    if not s:
+        send_message(chat_id, f"❌ 종목코드 <code>{code}</code>를 찾을 수 없습니다.")
+        return
+    if not stock_subscription.is_subscribed(chat_id, s["code"]):
+        send_message(chat_id, f"❌ <b>{s['name']}</b>은(는) 구독 중이 아닙니다.\n먼저 구독 등록 후 설정할 수 있습니다.")
+        return
+
+    cfg = stock_subscription.get_settings(chat_id, s["code"])
+    c = s["code"]
+    text = (
+        f"<b>{s['name']}</b> [<code>{c}</code>] 설정\n"
+        f"현재: 뉴스 {cfg['news_count']}건 · 토론방 {cfg['board_count']}건 · {cfg['days']}일"
+    )
+    keyboard = [
+        [{"text": "〔 뉴스 건수 〕", "callback_data": "noop"}],
+        [
+            {"text": "3건", "callback_data": f"news_count_{c}_3"},
+            {"text": "5건", "callback_data": f"news_count_{c}_5"},
+            {"text": "10건", "callback_data": f"news_count_{c}_10"},
+        ],
+        [{"text": "〔 토론방 건수 〕", "callback_data": "noop"}],
+        [
+            {"text": "3건", "callback_data": f"board_count_{c}_3"},
+            {"text": "5건", "callback_data": f"board_count_{c}_5"},
+            {"text": "10건", "callback_data": f"board_count_{c}_10"},
+        ],
+        [{"text": "〔 조회 기간 〕", "callback_data": "noop"}],
+        [
+            {"text": "7일", "callback_data": f"days_{c}_7"},
+            {"text": "14일", "callback_data": f"days_{c}_14"},
+            {"text": "30일", "callback_data": f"days_{c}_30"},
+        ],
+    ]
+    send_message_with_markup(chat_id, text, keyboard)
+
+
 def handle_stock_cmd(chat_id: int, args: str):
     N = lambda s: unicodedata.normalize("NFC", s)
     parts = args.strip().split(maxsplit=1)
@@ -574,6 +614,14 @@ def handle_stock_cmd(chat_id: int, args: str):
         s = stock_search.get_by_code(code)
         name = s["name"] if s else rest.strip()
         send_message(chat_id, f"⏳ <b>{name}</b> (<code>{code}</code>) 즉시 조회는 준비 중입니다.")
+        return
+
+    if subcmd == N("설정"):
+        if not rest:
+            send_message(chat_id, "사용법: /종목 설정 &lt;종목코드&gt;\n예: /종목 설정 005930")
+            return
+        code = rest.strip().zfill(6)
+        handle_stock_settings(chat_id, code)
         return
 
     # 그 외: 검색어로 처리
@@ -746,7 +794,13 @@ def handle_callback_query(callback_query_id: str, chat_id: int, message_id: int,
         send_message(chat_id, "🔍 뉴스/토론방 조회 중...")
         try:
             from stock_news import fetch_news_for_report
-            msg = fetch_news_for_report(s["code"], s["name"], s["market"])
+            cfg = stock_subscription.get_settings(chat_id, s["code"])
+            msg = fetch_news_for_report(
+                s["code"], s["name"], s["market"],
+                news_count=cfg["news_count"],
+                board_count=cfg["board_count"],
+                days=cfg["days"],
+            )
             if msg:
                 send_message(chat_id, msg)
             else:
@@ -765,6 +819,36 @@ def handle_callback_query(callback_query_id: str, chat_id: int, message_id: int,
                 lines.append(f"• <b>{info['name']}</b> (<code>{code}</code>, {info['market']})")
             _answer_callback(callback_query_id)
             send_message(chat_id, "\n".join(lines))
+
+    elif data.startswith("news_count_"):
+        rest = data[len("news_count_"):]
+        code, n = rest.rsplit("_", 1)
+        ok = stock_subscription.update_settings(chat_id, code, news_count=int(n))
+        if ok:
+            _answer_callback(callback_query_id, f"✅ 뉴스 {n}건으로 설정했습니다.")
+        else:
+            _answer_callback(callback_query_id, "❌ 설정 실패 (구독 중인 종목만 설정 가능)", alert=True)
+
+    elif data.startswith("board_count_"):
+        rest = data[len("board_count_"):]
+        code, n = rest.rsplit("_", 1)
+        ok = stock_subscription.update_settings(chat_id, code, board_count=int(n))
+        if ok:
+            _answer_callback(callback_query_id, f"✅ 토론방 {n}건으로 설정했습니다.")
+        else:
+            _answer_callback(callback_query_id, "❌ 설정 실패 (구독 중인 종목만 설정 가능)", alert=True)
+
+    elif data.startswith("days_"):
+        rest = data[len("days_"):]
+        code, n = rest.rsplit("_", 1)
+        ok = stock_subscription.update_settings(chat_id, code, days=int(n))
+        if ok:
+            _answer_callback(callback_query_id, f"✅ 조회 기간 {n}일로 설정했습니다.")
+        else:
+            _answer_callback(callback_query_id, "❌ 설정 실패 (구독 중인 종목만 설정 가능)", alert=True)
+
+    elif data == "noop":
+        _answer_callback(callback_query_id)
 
     elif data == "cancel":
         _answer_callback(callback_query_id)
