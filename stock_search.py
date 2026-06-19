@@ -1,21 +1,16 @@
 """
 KRX 코스피/코스닥 종목 검색 모듈
-- stock_list.json에 24시간 캐시
+- stock_list.json을 읽기만 함 (외부 다운로드 없음)
 - 메모리 내 _code_map, _name_map으로 빠른 검색
 """
 import json
 import logging
-import time
 import unicodedata
 from pathlib import Path
-
-import FinanceDataReader as fdr
-import pandas as pd
 
 log = logging.getLogger(__name__)
 
 CACHE_FILE = Path("stock_list.json")
-CACHE_TTL = 86400  # 24시간
 
 _code_map: dict = {}   # "005930" → {"name": "삼성전자", "market": "KOSPI"}
 _name_map: dict = {}   # "삼성전자" → {"code": "005930", "market": "KOSPI"}
@@ -23,42 +18,6 @@ _name_map: dict = {}   # "삼성전자" → {"code": "005930", "market": "KOSPI"
 
 def _normalize(s: str) -> str:
     return unicodedata.normalize("NFC", s).strip()
-
-
-def _fetch_all_stocks() -> list:
-    """FinanceDataReader로 코스피+코스닥 전체 종목 다운로드."""
-    kospi = fdr.StockListing('KOSPI')[['Code', 'Name']].copy()
-    kospi['market'] = 'KOSPI'
-    kosdaq = fdr.StockListing('KOSDAQ')[['Code', 'Name']].copy()
-    kosdaq['market'] = 'KOSDAQ'
-    df = pd.concat([kospi, kosdaq], ignore_index=True)
-    stocks = [
-        {"code": str(row.Code).zfill(6), "name": row.Name, "market": row.market}
-        for row in df.itertuples()
-        if row.Code and row.Name
-    ]
-    log.info("FinanceDataReader 전체 종목 수집: %d개", len(stocks))
-    return stocks
-
-
-def _load_cache():
-    """캐시 파일 읽기. 24시간 초과 또는 없으면 None 반환."""
-    if not CACHE_FILE.exists():
-        return None
-    try:
-        data = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
-        if time.time() - data.get("updated_at", 0) > CACHE_TTL:
-            return None
-        return data["stocks"]
-    except Exception:
-        return None
-
-
-def _save_cache(stocks: list):
-    CACHE_FILE.write_text(
-        json.dumps({"updated_at": time.time(), "stocks": stocks}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
 
 
 def _build_maps(stocks: list):
@@ -73,20 +32,17 @@ def _build_maps(stocks: list):
 
 
 def load_stocks():
-    """봇 시작 시 1회 호출. 캐시 유효하면 캐시 사용, 없으면 FDR에서 다운로드."""
-    stocks = _load_cache()
-    if stocks is None:
-        log.info("KRX 종목 목록 다운로드 중 (FinanceDataReader)...")
-        try:
-            stocks = _fetch_all_stocks()
-            _save_cache(stocks)
-            log.info("종목 목록 다운로드 완료: %d개", len(stocks))
-        except Exception as e:
-            log.error("KRX 종목 다운로드 실패: %s", e, exc_info=True)
-            stocks = []
-    else:
-        log.info("종목 목록 캐시 로드: %d개", len(stocks))
-    _build_maps(stocks)
+    """봇 시작 시 1회 호출. stock_list.json이 있으면 읽고, 없으면 빈 상태 유지."""
+    if not CACHE_FILE.exists():
+        log.warning("종목 데이터 없음: %s 파일이 없습니다.", CACHE_FILE)
+        return
+    try:
+        data = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        stocks = data.get("stocks", [])
+        _build_maps(stocks)
+        log.info("종목 목록 로드 완료: %d개", len(stocks))
+    except Exception as e:
+        log.error("종목 데이터 로드 실패: %s", e, exc_info=True)
 
 
 def search_stocks(query: str, limit: int = 5) -> list:
