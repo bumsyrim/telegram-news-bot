@@ -33,6 +33,20 @@ PUBLIC_COMMANDS = {
 
 log = logging.getLogger(__name__)
 
+_STOCK_HELP = (
+    "\n[📈 종목 검색/구독]\n"
+    "/종목 삼성       - 종목 검색 후 버튼으로 선택\n"
+    "/종목 005930     - 종목코드로 검색\n"
+    "/종목 목록       - 내 구독 종목 확인\n"
+    "/종목 해제 005930 - 구독 해제\n\n"
+    "💡 실시간 팝업 검색 (더 편함):\n"
+    "@ptw_aiwkeekly_bot 종목명 또는 코드 입력\n"
+    "→ 타이핑하면서 바로 목록 팝업\n"
+    "→ 탭 한 번으로 선택 후 버튼 표시:\n"
+    "   ✅ 구독 등록  🔕 구독 해제\n"
+    "   📊 즉시 조회  ❌ 취소"
+)
+
 _COMMON_HELP = (
     "[📋 공통 명령어]\n"
     "/start - 뉴스 구독 등록\n"
@@ -44,7 +58,7 @@ _COMMON_HELP = (
     "/금융 - 미국 시장 지표 조회\n"
     "/종목 - 종목 검색/구독\n"
     "/help - 도움말"
-)
+) + _STOCK_HELP
 
 HELP_TEXT = (
     "[📋 사용 가능한 명령어]\n"
@@ -57,7 +71,7 @@ HELP_TEXT = (
     "/금융 - 미국 시장 지표 조회\n"
     "/종목 - 종목 검색/구독\n"
     "/help - 도움말"
-)
+) + _STOCK_HELP
 
 ADMIN_HELP_TEXT = (
     "[👑 관리자 명령어]\n"
@@ -143,6 +157,20 @@ def send_message(chat_id: int, text: str):
     requests.post(
         url,
         json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+        timeout=10,
+    )
+
+
+def send_message_with_markup(chat_id: int, text: str, keyboard: list):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    requests.post(
+        url,
+        json={
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "reply_markup": {"inline_keyboard": keyboard},
+        },
         timeout=10,
     )
 
@@ -480,16 +508,20 @@ def handle_stock_cmd(chat_id: int, args: str):
     if not subcmd:
         send_message(
             chat_id,
-            "📈 <b>종목 명령어 사용법</b>\n\n"
-            "/종목 &lt;검색어&gt;      - 종목명/코드 검색\n"
-            "/종목 등록 &lt;코드&gt;   - 종목 구독 등록\n"
-            "/종목 해제 &lt;코드&gt;   - 종목 구독 해제\n"
-            "/종목 목록          - 내 구독 종목 전체\n"
-            "/종목 조회 &lt;코드&gt;   - 즉시 시세 조회\n\n"
-            "예시:\n"
+            "📌 <b>종목 검색 방법</b>\n\n"
+            "1️⃣ <b>명령어 방식:</b>\n"
             "/종목 삼성전자\n"
             "/종목 005930\n"
-            "/종목 등록 005930",
+            "→ 결과에서 버튼으로 구독등록/즉시조회 선택\n\n"
+            "2️⃣ <b>실시간 팝업 방식 (더 편함):</b>\n"
+            "@ptw_aiwkeekly_bot 삼성\n"
+            "→ 타이핑하면서 바로 목록 팝업\n"
+            "→ 탭 한 번으로 선택 후 아래 버튼 표시:\n"
+            "   [ ✅ 구독 등록 ] [ 🔕 구독 해제 ]\n"
+            "   [ 📊 즉시 조회 ] [ ❌ 취소 ]\n\n"
+            "<b>기타 명령어:</b>\n"
+            "/종목 목록          - 내 구독 종목 전체\n"
+            "/종목 해제 &lt;코드&gt;   - 구독 해제",
         )
         return
 
@@ -550,11 +582,19 @@ def handle_stock_cmd(chat_id: int, args: str):
     if not results:
         send_message(chat_id, f"'{query}'에 대한 검색 결과가 없습니다.\n종목명 또는 6자리 코드를 입력해보세요.")
         return
-    lines = [f"🔍 <b>'{query}' 검색 결과</b>\n"]
+    send_message(chat_id, f"🔍 <b>'{query}' 검색 결과</b>")
+    market_labels = {"KOSPI": "코스피", "KOSDAQ": "코스닥", "ETF": "ETF"}
     for r in results:
-        lines.append(f"• <b>{r['name']}</b> (<code>{r['code']}</code>, {r['market']})")
-    lines.append("\n/종목 등록 &lt;코드&gt;로 구독 등록하세요.")
-    send_message(chat_id, "\n".join(lines))
+        label = market_labels.get(r["market"], r["market"])
+        send_message_with_markup(
+            chat_id,
+            f"📌 <b>{r['name']}</b> (<code>{r['code']}</code>) [{label}]",
+            [[
+                {"text": "✅ 구독 등록", "callback_data": f"subscribe_{r['code']}"},
+                {"text": "📊 즉시 조회", "callback_data": f"report_{r['code']}"},
+            ]],
+        )
+    send_message(chat_id, f"💡 더 빠른 검색: @ptw_aiwkeekly_bot {query}")
 
 
 # ── InlineQuery 핸들러 ───────────────────────────────────
@@ -588,9 +628,6 @@ def handle_inline_query(inline_query_id: str, query: str):
                         ],
                         [
                             {"text": "📊 즉시 조회", "callback_data": f"report_{s['code']}"},
-                            {"text": "📋 구독 목록", "callback_data": "stocklist"},
-                        ],
-                        [
                             {"text": "❌ 취소", "callback_data": "cancel"},
                         ],
                     ]
