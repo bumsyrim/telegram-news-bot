@@ -830,10 +830,21 @@ def _morning_report():
     log.info("아침 리포트 실행 완료")
 
 
+def _stock_news_report():
+    log.info("종목 뉴스 수집 시작")
+    try:
+        from stock_news import collect_and_send
+        collect_and_send(send_message)
+    except Exception as e:
+        log.error("종목 뉴스 수집 오류: %s", e, exc_info=True)
+    log.info("종목 뉴스 수집 완료")
+
+
 def _run_scheduler():
     fire_at = _kst_to_local(7, 0)
     log.info("스케줄러 시작: 매일 %s (로컬) = 07:00 KST", fire_at)
     schedule.every().day.at(fire_at).do(_morning_report)
+    schedule.every(30).minutes.do(_stock_news_report)
     while True:
         schedule.run_pending()
         time.sleep(30)

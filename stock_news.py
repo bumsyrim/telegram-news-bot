@@ -1,0 +1,156 @@
+"""
+종목 뉴스 수집 모듈
+- 네이버 뉴스 API (NAVER_CLIENT_ID, NAVER_CLIENT_SECRET)
+- 네이버 증권 토론방 크롤링
+- stock_seen.json으로 중복 방지
+"""
+import hashlib
+import json
+import logging
+import os
+from datetime import datetime
+from pathlib import Path
+
+import requests
+from bs4 import BeautifulSoup
+
+log = logging.getLogger(__name__)
+
+SEEN_FILE = Path("stock_seen.json")
+NAVER_NEWS_URL = "https://openapi.naver.com/v1/search/news.json"
+NAVER_BOARD_URL = "https://finance.naver.com/item/board.naver"
+
+
+def _load_seen() -> set:
+    if SEEN_FILE.exists():
+        try:
+            return set(json.loads(SEEN_FILE.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    return set()
+
+
+def _save_seen(seen: set):
+    entries = list(seen)[-10000:]  # 최대 10000개 유지
+    SEEN_FILE.write_text(json.dumps(entries, ensure_ascii=False), encoding="utf-8")
+
+
+def _url_hash(url: str) -> str:
+    return hashlib.md5(url.encode()).hexdigest()[:12]
+
+
+def fetch_naver_news(name: str, display: int = 5) -> list:
+    """네이버 뉴스 API로 종목명 검색. 결과: [{"title", "link", "time"}, ...]"""
+    client_id = os.getenv("NAVER_CLIENT_ID", "")
+    client_secret = os.getenv("NAVER_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        return []
+    try:
+        resp = requests.get(
+            NAVER_NEWS_URL,
+            headers={
+                "X-Naver-Client-Id": client_id,
+                "X-Naver-Client-Secret": client_secret,
+            },
+            params={"query": name, "display": display, "sort": "date"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        results = []
+        for item in resp.json().get("items", []):
+            title = BeautifulSoup(item.get("title", ""), "lxml").get_text()
+            try:
+                dt = datetime.strptime(item.get("pubDate", ""), "%a, %d %b %Y %H:%M:%S %z")
+                time_str = dt.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                time_str = item.get("pubDate", "")
+            results.append({"title": title, "link": item.get("link", ""), "time": time_str})
+        return results
+    except Exception as e:
+        log.error("네이버 뉴스 조회 실패 (%s): %s", name, e)
+        return []
+
+
+def fetch_naver_board(code: str) -> list:
+    """네이버 증권 토론방 크롤링. 결과: [{"title", "link", "time"}, ...]"""
+    try:
+        resp = requests.get(
+            NAVER_BOARD_URL,
+            params={"code": code},
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        resp.encoding = "euc-kr"
+        soup = BeautifulSoup(resp.text, "lxml")
+        results = []
+        for row in soup.select("table.type2 tr"):
+            title_tag = row.select_one("td.title a")
+            time_tag = row.select_one("td.date")
+            if not title_tag or not time_tag:
+                continue
+            title = title_tag.get_text(strip=True)
+            href = title_tag.get("href", "")
+            link = f"https://finance.naver.com{href}" if href.startswith("/") else href
+            time_str = time_tag.get_text(strip=True)
+            if title:
+                results.append({"title": title, "link": link, "time": time_str})
+        return results
+    except Exception as e:
+        log.error("네이버 토론방 조회 실패 (%s): %s", code, e)
+        return []
+
+
+def collect_and_send(send_fn):
+    """
+    구독 종목별 뉴스/토론방 수집 후 새 항목을 send_fn(chat_id, text)으로 발송.
+    30분 간격 스케줄러에서 호출.
+    """
+    from stock_subscription import get_all_subscriptions
+
+    all_subs = get_all_subscriptions()
+    if not all_subs:
+        return
+
+    seen = _load_seen()
+    new_seen = set(seen)
+
+    # 종목별 구독 chat_id 목록 정리
+    stock_to_chats: dict = {}
+    for chat_id, stocks in all_subs.items():
+        for code, info in stocks.items():
+            stock_to_chats.setdefault(code, {"info": info, "chats": []})["chats"].append(chat_id)
+
+    for code, entry in stock_to_chats.items():
+        info = entry["info"]
+        name = info.get("name", code)
+        chat_ids = entry["chats"]
+
+        news_items = fetch_naver_news(name, display=5)
+        board_items = fetch_naver_board(code)
+
+        messages = []
+        for item in news_items:
+            h = _url_hash(item["link"])
+            if h in seen:
+                continue
+            new_seen.add(h)
+            messages.append(f"[뉴스] {item['title']}\n{item['time']}\n{item['link']}")
+
+        for item in board_items:
+            h = _url_hash(item["link"])
+            if h in seen:
+                continue
+            new_seen.add(h)
+            messages.append(f"[토론방] {item['title']}\n{item['time']}\n{item['link']}")
+
+        if messages:
+            text = f"<b>{name}</b> [{code}]\n\n" + "\n\n".join(messages)
+            for chat_id in chat_ids:
+                try:
+                    send_fn(int(chat_id), text)
+                except Exception as e:
+                    log.error("종목 뉴스 발송 실패 chat_id=%s: %s", chat_id, e)
+            log.info("종목 뉴스 발송: %s (%s) → %d명, %d건", name, code, len(chat_ids), len(messages))
+
+    _save_seen(new_seen)
