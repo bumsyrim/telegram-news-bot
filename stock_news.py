@@ -69,15 +69,26 @@ def _call_naver_news_api(query: str, display: int) -> list:
 
 def fetch_naver_news(name: str, code: str = "", display: int = 5) -> list:
     """
-    종목명 + 코드로 뉴스 검색 후 중복 제거.
-    종목명 10자 초과 시 앞 10자만 사용.
+    종목명 정확 일치 → 코드 → 앞 7자 순으로 뉴스 검색.
     결과: [{"title", "link", "time"}, ...]
     """
-    keyword = name[:10] if len(name) > 10 else name
     seen_links: dict = {}
     try:
-        for query in filter(None, [keyword, code or None]):
-            for item in _call_naver_news_api(query, display):
+        # 1단계: 종목명 전체 따옴표 정확 일치 검색
+        for item in _call_naver_news_api(f'"{name}"', display):
+            if item["link"] not in seen_links:
+                seen_links[item["link"]] = item
+
+        # 2단계: 결과 없으면 종목코드로 검색
+        if not seen_links and code:
+            for item in _call_naver_news_api(code, display):
+                if item["link"] not in seen_links:
+                    seen_links[item["link"]] = item
+
+        # 3단계: 그래도 없으면 앞 7자로 검색
+        if not seen_links:
+            short = name[:7]
+            for item in _call_naver_news_api(short, display):
                 if item["link"] not in seen_links:
                     seen_links[item["link"]] = item
     except Exception as e:
@@ -182,7 +193,7 @@ def fetch_news_for_report(code: str, name: str, market: str) -> str:
     messages = []
     for item in news_items:
         messages.append(f"[뉴스] {item['title']}\n{item['time']}\n{item['link']}")
-    for item in board_items[:5]:
+    for item in board_items[:3]:
         messages.append(f"[토론방] {item['title']}\n{item['time']}\n{item['link']}")
 
     if not messages:
