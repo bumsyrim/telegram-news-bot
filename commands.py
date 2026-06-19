@@ -500,6 +500,69 @@ def handle_demote(chat_id: int, args: str):
     send_message(chat_id, f"🗑️ <code>{target}</code> 의 관리자 권한을 제거했습니다.")
 
 
+def _execute_stock_action(chat_id: int, code: str, action: str):
+    """종목 코드와 action으로 직접 실행. send_message로 결과 전송."""
+    s = stock_search.get_by_code(code)
+    if not s:
+        send_message(chat_id, f"❌ 종목코드 <code>{code}</code>를 찾을 수 없습니다.")
+        return
+
+    if action == "register":
+        ok = stock_subscription.subscribe(chat_id, s["code"], s["name"], s["market"])
+        if ok:
+            send_message(chat_id, f"✅ <b>{s['name']}</b> (<code>{s['code']}</code>, {s['market']}) 구독 등록했습니다.")
+        else:
+            send_message(chat_id, f"이미 <b>{s['name']}</b> (<code>{s['code']}</code>)를 구독 중입니다.")
+
+    elif action == "unsubscribe":
+        ok = stock_subscription.unsubscribe(chat_id, s["code"])
+        if ok:
+            send_message(chat_id, f"🗑️ <b>{s['name']}</b> (<code>{s['code']}</code>) 구독 해제했습니다.")
+        else:
+            send_message(chat_id, f"❌ <code>{s['code']}</code>는 구독 중이 아닙니다.\n/종목 목록으로 구독 종목을 확인하세요.")
+
+    elif action == "config":
+        handle_stock_settings(chat_id, s["code"])
+
+    elif action == "report":
+        send_message(chat_id, "🔍 뉴스/토론방 조회 중...")
+        try:
+            from stock_news import fetch_news_for_report
+            cfg = stock_subscription.get_settings(chat_id, s["code"])
+            msg = fetch_news_for_report(
+                s["code"], s["name"], s["market"],
+                news_count=cfg["news_count"],
+                board_count=cfg["board_count"],
+                days=cfg["days"],
+            )
+            send_message(chat_id, msg if msg else f"<b>{s['name']}</b> [{s['code']}]\n새로운 소식이 없습니다.")
+        except Exception as e:
+            log.error("즉시 조회 실패: %s", e, exc_info=True)
+            send_message(chat_id, "❌ 뉴스 조회 중 오류가 발생했습니다.")
+
+
+def _find_stock_with_buttons(chat_id: int, query: str, action: str):
+    """query로 종목 검색 후 action 실행.
+    결과 1개 → 바로 실행 / 여러 개 → 버튼 목록 / 0개 → 안내 메시지.
+    """
+    results = stock_search.search_stocks(query, limit=8)
+    if not results:
+        send_message(chat_id, f"'{query}'에 대한 검색 결과가 없습니다.\n종목명 또는 코드를 입력해보세요.")
+        return
+    if len(results) == 1:
+        _execute_stock_action(chat_id, results[0]["code"], action)
+        return
+    market_labels = {"KOSPI": "코스피", "KOSDAQ": "코스닥", "ETF": "ETF"}
+    keyboard = []
+    for r in results:
+        ml = market_labels.get(r["market"], r["market"])
+        keyboard.append([{
+            "text": f"{r['name']}  {r['code']}  {ml}",
+            "callback_data": f"{action}_{r['code']}",
+        }])
+    send_message_with_markup(chat_id, f"🔍 <b>'{query}' 검색 결과</b>", keyboard)
+
+
 def handle_stock_settings(chat_id: int, code: str):
     """종목별 뉴스/토론방 건수·기간 설정 메뉴 전송."""
     s = stock_search.get_by_code(code)
@@ -567,32 +630,16 @@ def handle_stock_cmd(chat_id: int, args: str):
 
     if subcmd == N("등록"):
         if not rest:
-            send_message(chat_id, "사용법: /종목 등록 &lt;종목코드&gt;\n예: /종목 등록 005930")
+            send_message(chat_id, "사용법: /종목 등록 &lt;종목명 또는 코드&gt;\n예: /종목 등록 삼성전자")
             return
-        code = rest.strip().zfill(6)
-        s = stock_search.get_by_code(code)
-        if not s:
-            send_message(chat_id, f"❌ 종목코드 <code>{rest.strip()}</code>를 찾을 수 없습니다.\n/종목 &lt;검색어&gt;로 먼저 검색해보세요.")
-            return
-        ok = stock_subscription.subscribe(chat_id, s["code"], s["name"], s["market"])
-        if ok:
-            send_message(chat_id, f"✅ <b>{s['name']}</b> (<code>{s['code']}</code>, {s['market']}) 구독 등록했습니다.")
-        else:
-            send_message(chat_id, f"이미 <b>{s['name']}</b> (<code>{s['code']}</code>)를 구독 중입니다.")
+        _find_stock_with_buttons(chat_id, rest.strip(), "register")
         return
 
     if subcmd == N("해제"):
         if not rest:
-            send_message(chat_id, "사용법: /종목 해제 &lt;종목코드&gt;\n예: /종목 해제 005930")
+            send_message(chat_id, "사용법: /종목 해제 &lt;종목명 또는 코드&gt;\n예: /종목 해제 삼성전자")
             return
-        code = rest.strip().zfill(6)
-        s = stock_search.get_by_code(code)
-        name = s["name"] if s else rest.strip()
-        ok = stock_subscription.unsubscribe(chat_id, code)
-        if ok:
-            send_message(chat_id, f"🗑️ <b>{name}</b> (<code>{code}</code>) 구독 해제했습니다.")
-        else:
-            send_message(chat_id, f"❌ <code>{code}</code>는 구독 중이 아닙니다.\n/종목 목록으로 구독 종목을 확인하세요.")
+        _find_stock_with_buttons(chat_id, rest.strip(), "unsubscribe")
         return
 
     if subcmd == N("목록"):
@@ -608,20 +655,16 @@ def handle_stock_cmd(chat_id: int, args: str):
 
     if subcmd == N("조회"):
         if not rest:
-            send_message(chat_id, "사용법: /종목 조회 &lt;종목코드&gt;\n예: /종목 조회 005930")
+            send_message(chat_id, "사용법: /종목 조회 &lt;종목명 또는 코드&gt;\n예: /종목 조회 삼성전자")
             return
-        code = rest.strip().zfill(6)
-        s = stock_search.get_by_code(code)
-        name = s["name"] if s else rest.strip()
-        send_message(chat_id, f"⏳ <b>{name}</b> (<code>{code}</code>) 즉시 조회는 준비 중입니다.")
+        _find_stock_with_buttons(chat_id, rest.strip(), "report")
         return
 
     if subcmd == N("설정"):
         if not rest:
-            send_message(chat_id, "사용법: /종목 설정 &lt;종목코드&gt;\n예: /종목 설정 005930")
+            send_message(chat_id, "사용법: /종목 설정 &lt;종목명 또는 코드&gt;\n예: /종목 설정 삼성전자")
             return
-        code = rest.strip().zfill(6)
-        handle_stock_settings(chat_id, code)
+        _find_stock_with_buttons(chat_id, rest.strip(), "config")
         return
 
     # 그 외: 검색어로 처리
@@ -740,7 +783,26 @@ def _fetch_price_msg(code: str, market: str, name: str) -> str:
 
 
 def handle_callback_query(callback_query_id: str, chat_id: int, message_id: int, data: str):
-    if data.startswith("subscribe_"):
+    if data.startswith("register_"):
+        code = data[len("register_"):]
+        s = stock_search.get_by_code(code)
+        if not s:
+            _answer_callback(callback_query_id, "❌ 종목 정보를 찾을 수 없습니다.", alert=True)
+            return
+        ok = stock_subscription.subscribe(chat_id, s["code"], s["name"], s["market"])
+        if ok:
+            _answer_callback(callback_query_id, f"✅ {s['name']} 구독 등록 완료!")
+            _edit_message(chat_id, message_id,
+                          f"✅ <b>{s['name']}</b> (<code>{s['code']}</code>, {s['market']}) 구독 등록했습니다.")
+        else:
+            _answer_callback(callback_query_id, f"이미 {s['name']}을(를) 구독 중입니다.", alert=True)
+
+    elif data.startswith("config_"):
+        code = data[len("config_"):]
+        _answer_callback(callback_query_id)
+        handle_stock_settings(chat_id, code)
+
+    elif data.startswith("subscribe_"):
         code = data[len("subscribe_"):]
         s = stock_search.get_by_code(code)
         if not s:
