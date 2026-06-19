@@ -9,7 +9,8 @@ import time
 import unicodedata
 from pathlib import Path
 
-from pykrx import stock as krx_stock
+import FinanceDataReader as fdr
+import pandas as pd
 
 log = logging.getLogger(__name__)
 
@@ -25,17 +26,18 @@ def _normalize(s: str) -> str:
 
 
 def _fetch_all_stocks() -> list:
-    """pykrx로 코스피+코스닥 전체 종목 다운로드. 날짜 파라미터 없이 호출."""
-    all_tickers = krx_stock.get_market_ticker_list(market="ALL")
-    kospi_set = set(krx_stock.get_market_ticker_list(market="KOSPI"))
-    stocks = []
-    for ticker in all_tickers:
-        name = krx_stock.get_market_ticker_name(ticker)
-        if not name:
-            continue
-        market = "KOSPI" if ticker in kospi_set else "KOSDAQ"
-        stocks.append({"code": ticker, "name": name, "market": market})
-    log.info("pykrx 전체 종목 수집: %d개", len(stocks))
+    """FinanceDataReader로 코스피+코스닥 전체 종목 다운로드."""
+    kospi = fdr.StockListing('KOSPI')[['Code', 'Name']].copy()
+    kospi['market'] = 'KOSPI'
+    kosdaq = fdr.StockListing('KOSDAQ')[['Code', 'Name']].copy()
+    kosdaq['market'] = 'KOSDAQ'
+    df = pd.concat([kospi, kosdaq], ignore_index=True)
+    stocks = [
+        {"code": str(row.Code).zfill(6), "name": row.Name, "market": row.market}
+        for row in df.itertuples()
+        if row.Code and row.Name
+    ]
+    log.info("FinanceDataReader 전체 종목 수집: %d개", len(stocks))
     return stocks
 
 
@@ -71,10 +73,10 @@ def _build_maps(stocks: list):
 
 
 def load_stocks():
-    """봇 시작 시 1회 호출. 캐시 유효하면 캐시 사용, 없으면 KRX에서 다운로드."""
+    """봇 시작 시 1회 호출. 캐시 유효하면 캐시 사용, 없으면 FDR에서 다운로드."""
     stocks = _load_cache()
     if stocks is None:
-        log.info("KRX 종목 목록 다운로드 중 (pykrx)...")
+        log.info("KRX 종목 목록 다운로드 중 (FinanceDataReader)...")
         try:
             stocks = _fetch_all_stocks()
             _save_cache(stocks)
