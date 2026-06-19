@@ -557,6 +557,34 @@ def handle_stock_cmd(chat_id: int, args: str):
     send_message(chat_id, "\n".join(lines))
 
 
+# ── InlineQuery 핸들러 ───────────────────────────────────
+
+def handle_inline_query(inline_query_id: str, query: str):
+    """@봇이름 <검색어> 입력 시 실시간 종목 드롭다운 반환."""
+    q = query.strip()
+    results = []
+    if q:
+        stocks = stock_search.search_stocks(q, limit=10)
+        for s in stocks:
+            market_label = {"KOSPI": "코스피", "KOSDAQ": "코스닥", "ETF": "ETF"}.get(s["market"], s["market"])
+            results.append({
+                "type": "article",
+                "id": s["code"],
+                "title": f"{s['name']} ({s['code']})",
+                "description": f"{market_label} · 코드: {s['code']}",
+                "input_message_content": {
+                    "message_text": f"/종목 등록 {s['code']}"
+                },
+            })
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerInlineQuery"
+    requests.post(
+        url,
+        json={"inline_query_id": inline_query_id, "results": results, "cache_time": 30},
+        timeout=10,
+    )
+    log.debug("InlineQuery 응답: query=%r results=%d개", q, len(results))
+
+
 # ── 명령어 디스패치 ───────────────────────────────────────
 
 def _parse_cmd(text: str) -> str:
@@ -648,7 +676,7 @@ def run_polling():
     while True:
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
-            params: dict = {"timeout": 30, "allowed_updates": ["message"]}
+            params: dict = {"timeout": 30, "allowed_updates": ["message", "inline_query"]}
             if offset is not None:
                 params["offset"] = offset
 
@@ -658,6 +686,16 @@ def run_polling():
 
             for update in result:
                 offset = update["update_id"] + 1
+
+                # inline_query 처리
+                if "inline_query" in update:
+                    iq = update["inline_query"]
+                    try:
+                        handle_inline_query(iq["id"], iq.get("query", ""))
+                    except Exception as e:
+                        log.error("InlineQuery 처리 오류: %s", e, exc_info=True)
+                    continue
+
                 msg = update.get("message", {})
                 chat_id = msg.get("chat", {}).get("id")
                 text = msg.get("text", "")
