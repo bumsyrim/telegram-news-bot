@@ -684,10 +684,10 @@ def _fetch_price_msg(code: str, market: str, name: str) -> str:
     sign = "+" if change >= 0 else ""
     now_kst = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
     return (
-        f"💰 <b>{name}</b> (<code>{code}</code>)\n"
+        f"<b>{name}</b> [{code}]\n"
         f"현재가: {price:,.0f}원\n"
         f"전일대비: {sign}{change:,.0f}원 ({sign}{pct:.2f}%)\n"
-        f"⏰ {now_kst.strftime('%Y-%m-%d %H:%M')} 기준 (KST)"
+        f"{now_kst.strftime('%Y-%m-%d %H:%M')} 기준 (KST)"
     )
 
 
