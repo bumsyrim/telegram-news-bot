@@ -85,14 +85,16 @@ def fetch_naver_board(code: str) -> list:
         soup = BeautifulSoup(resp.text, "lxml")
         results = []
         for row in soup.select("table.type2 tr"):
-            title_tag = row.select_one("td.title a")
-            time_tag = row.select_one("td.date")
-            if not title_tag or not time_tag:
+            tds = row.find_all("td")
+            if len(tds) < 2:
+                continue
+            time_str = tds[0].get_text(strip=True)   # td[0]: 날짜
+            title_tag = tds[1].find("a")              # td[1]: 제목
+            if not title_tag or not time_str:
                 continue
             title = title_tag.get_text(strip=True)
             href = title_tag.get("href", "")
             link = f"https://finance.naver.com{href}" if href.startswith("/") else href
-            time_str = time_tag.get_text(strip=True)
             if title:
                 results.append({"title": title, "link": link, "time": time_str})
         return results
@@ -154,3 +156,22 @@ def collect_and_send(send_fn):
             log.info("종목 뉴스 발송: %s (%s) → %d명, %d건", name, code, len(chat_ids), len(messages))
 
     _save_seen(new_seen)
+
+
+def fetch_news_for_report(code: str, name: str, market: str) -> str:
+    """
+    즉시 조회 버튼용: seen 필터 없이 최신 뉴스/토론방 수집 후 메시지 문자열 반환.
+    새 글 없으면 None 반환.
+    """
+    news_items = fetch_naver_news(name, display=5)
+    board_items = fetch_naver_board(code)
+
+    messages = []
+    for item in news_items:
+        messages.append(f"[뉴스] {item['title']}\n{item['time']}\n{item['link']}")
+    for item in board_items[:5]:
+        messages.append(f"[토론방] {item['title']}\n{item['time']}\n{item['link']}")
+
+    if not messages:
+        return None
+    return f"<b>{name}</b> [{code}]\n\n" + "\n\n".join(messages)

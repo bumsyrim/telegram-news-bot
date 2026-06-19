@@ -739,8 +739,21 @@ def handle_callback_query(callback_query_id: str, chat_id: int, message_id: int,
     elif data.startswith("report_"):
         code = data[len("report_"):]
         s = stock_search.get_by_code(code)
-        name = s["name"] if s else code
-        _answer_callback(callback_query_id, f"⏳ {name} 즉시 조회는 준비 중입니다.", alert=True)
+        if not s:
+            _answer_callback(callback_query_id, "❌ 종목 정보를 찾을 수 없습니다.", alert=True)
+            return
+        _answer_callback(callback_query_id, "📡 조회 중...")
+        send_message(chat_id, "🔍 뉴스/토론방 조회 중...")
+        try:
+            from stock_news import fetch_news_for_report
+            msg = fetch_news_for_report(s["code"], s["name"], s["market"])
+            if msg:
+                send_message(chat_id, msg)
+            else:
+                send_message(chat_id, f"<b>{s['name']}</b> [{s['code']}]\n새로운 소식이 없습니다.")
+        except Exception as e:
+            log.error("즉시 조회 실패: %s", e, exc_info=True)
+            send_message(chat_id, "❌ 뉴스 조회 중 오류가 발생했습니다.")
 
     elif data == "stocklist":
         subs = stock_subscription.get_subscriptions(chat_id)
