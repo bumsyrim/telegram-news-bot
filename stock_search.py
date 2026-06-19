@@ -3,7 +3,6 @@ KRX 코스피/코스닥 종목 검색 모듈
 - stock_list.json에 24시간 캐시
 - 메모리 내 _code_map, _name_map으로 빠른 검색
 """
-import datetime
 import json
 import logging
 import time
@@ -26,16 +25,17 @@ def _normalize(s: str) -> str:
 
 
 def _fetch_all_stocks() -> list:
-    """pykrx로 코스피+코스닥 전체 종목 다운로드."""
-    date = datetime.datetime.now().strftime("%Y%m%d")
+    """pykrx로 코스피+코스닥 전체 종목 다운로드. 날짜 파라미터 없이 호출."""
+    all_tickers = krx_stock.get_market_ticker_list(market="ALL")
+    kospi_set = set(krx_stock.get_market_ticker_list(market="KOSPI"))
     stocks = []
-    for market in ("KOSPI", "KOSDAQ"):
-        tickers = krx_stock.get_market_ticker_list(date, market=market)
-        for ticker in tickers:
-            name = krx_stock.get_market_ticker_name(ticker)
-            if name:
-                stocks.append({"code": ticker, "name": name, "market": market})
-        log.info("pykrx %s 종목 수집: %d개", market, len(tickers))
+    for ticker in all_tickers:
+        name = krx_stock.get_market_ticker_name(ticker)
+        if not name:
+            continue
+        market = "KOSPI" if ticker in kospi_set else "KOSDAQ"
+        stocks.append({"code": ticker, "name": name, "market": market})
+    log.info("pykrx 전체 종목 수집: %d개", len(stocks))
     return stocks
 
 
