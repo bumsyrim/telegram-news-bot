@@ -567,13 +567,33 @@ def handle_inline_query(inline_query_id: str, query: str):
         stocks = stock_search.search_stocks(q, limit=10)
         for s in stocks:
             market_label = {"KOSPI": "코스피", "KOSDAQ": "코스닥", "ETF": "ETF"}.get(s["market"], s["market"])
+            msg_text = (
+                f"📌 <b>{s['name']}</b> (<code>{s['code']}</code>) [{market_label}]\n"
+                f"원하는 작업을 선택하세요."
+            )
             results.append({
                 "type": "article",
                 "id": s["code"],
                 "title": f"{s['name']} ({s['code']})",
                 "description": f"{market_label} · 코드: {s['code']}",
                 "input_message_content": {
-                    "message_text": f"/종목 등록 {s['code']}"
+                    "message_text": msg_text,
+                    "parse_mode": "HTML",
+                },
+                "reply_markup": {
+                    "inline_keyboard": [
+                        [
+                            {"text": "✅ 구독 등록", "callback_data": f"subscribe_{s['code']}"},
+                            {"text": "🔕 구독 해제", "callback_data": f"unsubscribe_{s['code']}"},
+                        ],
+                        [
+                            {"text": "📊 즉시 조회", "callback_data": f"report_{s['code']}"},
+                            {"text": "📋 구독 목록", "callback_data": "stocklist"},
+                        ],
+                        [
+                            {"text": "❌ 취소", "callback_data": "cancel"},
+                        ],
+                    ]
                 },
             })
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerInlineQuery"
@@ -583,6 +603,84 @@ def handle_inline_query(inline_query_id: str, query: str):
         timeout=10,
     )
     log.debug("InlineQuery 응답: query=%r results=%d개", q, len(results))
+
+
+# ── CallbackQuery 핸들러 ──────────────────────────────────
+
+def _answer_callback(callback_query_id: str, text: str = "", alert: bool = False):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
+    requests.post(
+        url,
+        json={"callback_query_id": callback_query_id, "text": text, "show_alert": alert},
+        timeout=10,
+    )
+
+
+def _delete_message(chat_id: int, message_id: int):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage"
+    requests.post(url, json={"chat_id": chat_id, "message_id": message_id}, timeout=10)
+
+
+def _edit_message(chat_id: int, message_id: int, text: str):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText"
+    requests.post(
+        url,
+        json={"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML"},
+        timeout=10,
+    )
+
+
+def handle_callback_query(callback_query_id: str, chat_id: int, message_id: int, data: str):
+    if data.startswith("subscribe_"):
+        code = data[len("subscribe_"):]
+        s = stock_search.get_by_code(code)
+        if not s:
+            _answer_callback(callback_query_id, "❌ 종목 정보를 찾을 수 없습니다.", alert=True)
+            return
+        ok = stock_subscription.subscribe(chat_id, s["code"], s["name"], s["market"])
+        if ok:
+            _answer_callback(callback_query_id, f"✅ {s['name']} 구독 등록 완료!")
+            _edit_message(
+                chat_id, message_id,
+                f"✅ <b>{s['name']}</b> (<code>{s['code']}</code>, {s['market']}) 구독 등록했습니다.",
+            )
+        else:
+            _answer_callback(callback_query_id, f"이미 {s['name']}을(를) 구독 중입니다.", alert=True)
+
+    elif data.startswith("unsubscribe_"):
+        code = data[len("unsubscribe_"):]
+        s = stock_search.get_by_code(code)
+        name = s["name"] if s else code
+        ok = stock_subscription.unsubscribe(chat_id, code)
+        if ok:
+            _answer_callback(callback_query_id, f"🔕 {name} 구독 해제 완료!")
+            _edit_message(
+                chat_id, message_id,
+                f"🔕 <b>{name}</b> (<code>{code}</code>) 구독 해제했습니다.",
+            )
+        else:
+            _answer_callback(callback_query_id, f"{name}은(는) 구독 중이 아닙니다.", alert=True)
+
+    elif data.startswith("report_"):
+        code = data[len("report_"):]
+        s = stock_search.get_by_code(code)
+        name = s["name"] if s else code
+        _answer_callback(callback_query_id, f"⏳ {name} 즉시 조회는 준비 중입니다.", alert=True)
+
+    elif data == "stocklist":
+        subs = stock_subscription.get_subscriptions(chat_id)
+        if not subs:
+            _answer_callback(callback_query_id, "구독 중인 종목이 없습니다.", alert=True)
+        else:
+            lines = [f"📋 <b>내 구독 종목</b> ({len(subs)}개)\n"]
+            for code, info in subs.items():
+                lines.append(f"• <b>{info['name']}</b> (<code>{code}</code>, {info['market']})")
+            _answer_callback(callback_query_id)
+            send_message(chat_id, "\n".join(lines))
+
+    elif data == "cancel":
+        _answer_callback(callback_query_id)
+        _delete_message(chat_id, message_id)
 
 
 # ── 명령어 디스패치 ───────────────────────────────────────
@@ -676,7 +774,7 @@ def run_polling():
     while True:
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
-            params: dict = {"timeout": 30, "allowed_updates": ["message", "inline_query"]}
+            params: dict = {"timeout": 30, "allowed_updates": ["message", "inline_query", "callback_query"]}
             if offset is not None:
                 params["offset"] = offset
 
@@ -694,6 +792,22 @@ def run_polling():
                         handle_inline_query(iq["id"], iq.get("query", ""))
                     except Exception as e:
                         log.error("InlineQuery 처리 오류: %s", e, exc_info=True)
+                    continue
+
+                # callback_query 처리
+                if "callback_query" in update:
+                    cq = update["callback_query"]
+                    cq_chat_id = cq["from"]["id"]
+                    cq_msg = cq.get("message", {})
+                    try:
+                        handle_callback_query(
+                            cq["id"],
+                            cq_chat_id,
+                            cq_msg.get("message_id"),
+                            cq.get("data", ""),
+                        )
+                    except Exception as e:
+                        log.error("CallbackQuery 처리 오류: %s", e, exc_info=True)
                     continue
 
                 msg = update.get("message", {})
