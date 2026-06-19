@@ -17,6 +17,8 @@ import requests
 import schedule
 
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+import stock_search
+import stock_subscription
 
 SOURCES_FILE = Path("sources.json")
 WORKFLOW_FILE = Path(".github/workflows/run_bot.yml")
@@ -26,7 +28,7 @@ ENV_FILE = Path(".env")
 # 누구나 사용 가능한 명령어 (NFC 정규화된 소문자로 저장)
 PUBLIC_COMMANDS = {
     unicodedata.normalize("NFC", c)
-    for c in {"/start", "/stop", "/날씨", "/weather", "/location", "/코스피", "/kospi", "/금융", "/finance", "/help", "/list"}
+    for c in {"/start", "/stop", "/날씨", "/weather", "/location", "/코스피", "/kospi", "/금융", "/finance", "/help", "/list", "/종목"}
 }
 
 log = logging.getLogger(__name__)
@@ -40,6 +42,7 @@ _COMMON_HELP = (
     "/location 위치명 - 날씨 위치 변경\n"
     "/코스피 - 코스피 지수 조회\n"
     "/금융 - 미국 시장 지표 조회\n"
+    "/종목 - 종목 검색/구독\n"
     "/help - 도움말"
 )
 
@@ -52,6 +55,7 @@ HELP_TEXT = (
     "/location 위치명 - 날씨 위치 변경\n"
     "/코스피 - 코스피 지수 조회\n"
     "/금융 - 미국 시장 지표 조회\n"
+    "/종목 - 종목 검색/구독\n"
     "/help - 도움말"
 )
 
@@ -467,6 +471,92 @@ def handle_demote(chat_id: int, args: str):
     send_message(chat_id, f"🗑️ <code>{target}</code> 의 관리자 권한을 제거했습니다.")
 
 
+def handle_stock_cmd(chat_id: int, args: str):
+    N = lambda s: unicodedata.normalize("NFC", s)
+    parts = args.strip().split(maxsplit=1)
+    subcmd = N(parts[0]) if parts else ""
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    if not subcmd:
+        send_message(
+            chat_id,
+            "📈 <b>종목 명령어 사용법</b>\n\n"
+            "/종목 &lt;검색어&gt;      - 종목명/코드 검색\n"
+            "/종목 등록 &lt;코드&gt;   - 종목 구독 등록\n"
+            "/종목 해제 &lt;코드&gt;   - 종목 구독 해제\n"
+            "/종목 목록          - 내 구독 종목 전체\n"
+            "/종목 조회 &lt;코드&gt;   - 즉시 시세 조회\n\n"
+            "예시:\n"
+            "/종목 삼성전자\n"
+            "/종목 005930\n"
+            "/종목 등록 005930",
+        )
+        return
+
+    if subcmd == N("등록"):
+        if not rest:
+            send_message(chat_id, "사용법: /종목 등록 &lt;종목코드&gt;\n예: /종목 등록 005930")
+            return
+        code = rest.strip().zfill(6)
+        s = stock_search.get_by_code(code)
+        if not s:
+            send_message(chat_id, f"❌ 종목코드 <code>{rest.strip()}</code>를 찾을 수 없습니다.\n/종목 &lt;검색어&gt;로 먼저 검색해보세요.")
+            return
+        ok = stock_subscription.subscribe(chat_id, s["code"], s["name"], s["market"])
+        if ok:
+            send_message(chat_id, f"✅ <b>{s['name']}</b> (<code>{s['code']}</code>, {s['market']}) 구독 등록했습니다.")
+        else:
+            send_message(chat_id, f"이미 <b>{s['name']}</b> (<code>{s['code']}</code>)를 구독 중입니다.")
+        return
+
+    if subcmd == N("해제"):
+        if not rest:
+            send_message(chat_id, "사용법: /종목 해제 &lt;종목코드&gt;\n예: /종목 해제 005930")
+            return
+        code = rest.strip().zfill(6)
+        s = stock_search.get_by_code(code)
+        name = s["name"] if s else rest.strip()
+        ok = stock_subscription.unsubscribe(chat_id, code)
+        if ok:
+            send_message(chat_id, f"🗑️ <b>{name}</b> (<code>{code}</code>) 구독 해제했습니다.")
+        else:
+            send_message(chat_id, f"❌ <code>{code}</code>는 구독 중이 아닙니다.\n/종목 목록으로 구독 종목을 확인하세요.")
+        return
+
+    if subcmd == N("목록"):
+        subs = stock_subscription.get_subscriptions(chat_id)
+        if not subs:
+            send_message(chat_id, "구독 중인 종목이 없습니다.\n/종목 등록 &lt;코드&gt;로 등록하세요.")
+            return
+        lines = [f"📋 <b>내 구독 종목</b> ({len(subs)}개)\n"]
+        for code, info in subs.items():
+            lines.append(f"• <b>{info['name']}</b> (<code>{code}</code>, {info['market']})")
+        send_message(chat_id, "\n".join(lines))
+        return
+
+    if subcmd == N("조회"):
+        if not rest:
+            send_message(chat_id, "사용법: /종목 조회 &lt;종목코드&gt;\n예: /종목 조회 005930")
+            return
+        code = rest.strip().zfill(6)
+        s = stock_search.get_by_code(code)
+        name = s["name"] if s else rest.strip()
+        send_message(chat_id, f"⏳ <b>{name}</b> (<code>{code}</code>) 즉시 조회는 준비 중입니다.")
+        return
+
+    # 그 외: 검색어로 처리
+    query = args.strip()
+    results = stock_search.search_stocks(query)
+    if not results:
+        send_message(chat_id, f"'{query}'에 대한 검색 결과가 없습니다.\n종목명 또는 6자리 코드를 입력해보세요.")
+        return
+    lines = [f"🔍 <b>'{query}' 검색 결과</b>\n"]
+    for r in results:
+        lines.append(f"• <b>{r['name']}</b> (<code>{r['code']}</code>, {r['market']})")
+    lines.append("\n/종목 등록 &lt;코드&gt;로 구독 등록하세요.")
+    send_message(chat_id, "\n".join(lines))
+
+
 # ── 명령어 디스패치 ───────────────────────────────────────
 
 def _parse_cmd(text: str) -> str:
@@ -494,6 +584,7 @@ def dispatch(chat_id: int, text: str, username: str = ""):
         N("/finance"):  lambda: handle_finance_query(chat_id),
         N("/help"):     lambda: send_message(chat_id, ADMIN_HELP_TEXT if is_admin(chat_id) else HELP_TEXT),
         N("/list"):     lambda: handle_list(chat_id),
+        N("/종목"):     lambda: handle_stock_cmd(chat_id, args),
     }
     admin_handlers = {
         N("/add"):         lambda: handle_add(chat_id, args),
@@ -551,6 +642,7 @@ def _run_scheduler():
 
 def run_polling():
     log.info("텔레그램 명령어 봇 시작 (관리자 ID: %s)", TELEGRAM_CHAT_ID)
+    stock_search.load_stocks()
     threading.Thread(target=_run_scheduler, daemon=True, name="scheduler").start()
     offset = None
     while True:
