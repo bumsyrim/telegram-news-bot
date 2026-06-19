@@ -8,7 +8,7 @@ import hashlib
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
@@ -58,12 +58,13 @@ def _call_naver_news_api(query: str, display: int) -> list:
     results = []
     for item in resp.json().get("items", []):
         title = BeautifulSoup(item.get("title", ""), "lxml").get_text()
+        dt = None
         try:
             dt = datetime.strptime(item.get("pubDate", ""), "%a, %d %b %Y %H:%M:%S %z")
             time_str = dt.strftime("%Y-%m-%d %H:%M")
         except Exception:
             time_str = item.get("pubDate", "")
-        results.append({"title": title, "link": item.get("link", ""), "time": time_str})
+        results.append({"title": title, "link": item.get("link", ""), "time": time_str, "dt": dt})
     return results
 
 
@@ -93,7 +94,13 @@ def fetch_naver_news(name: str, code: str = "", display: int = 5) -> list:
                     seen_links[item["link"]] = item
     except Exception as e:
         log.error("네이버 뉴스 조회 실패 (%s): %s", name, e)
-    return list(seen_links.values())
+
+    # 최근 7일 필터 + 최신순 정렬 + 최대 5건
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    items = list(seen_links.values())
+    items = [i for i in items if i["dt"] is None or i["dt"] >= cutoff]
+    items.sort(key=lambda i: i["dt"] or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    return [{"title": i["title"], "link": i["link"], "time": i["time"]} for i in items[:display]]
 
 
 def fetch_naver_board(code: str) -> list:
@@ -163,7 +170,7 @@ def collect_and_send(send_fn):
             new_seen.add(h)
             messages.append(f"[뉴스] {item['title']}\n{item['time']}\n{item['link']}")
 
-        for item in board_items:
+        for item in board_items[:3]:
             h = _url_hash(item["link"])
             if h in seen:
                 continue
