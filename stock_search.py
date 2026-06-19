@@ -60,12 +60,22 @@ def search_stocks(query: str, limit: int = 5) -> list:
     q = _normalize(query)
     q_key = _search_key(q)
 
-    # 1) 코드 완전 일치
+    # 1) 코드 검색 (숫자 입력 시)
     if q.isdigit():
+        # 6자리 완전 일치
         code = q.zfill(6)
         if code in _code_map:
             m = _code_map[code]
             return [{"code": code, "name": m["name"], "market": m["market"]}]
+        # 6자리 미만 → 앞자리 일치 검색
+        results = []
+        for code, m in _code_map.items():
+            if code.startswith(q):
+                results.append({"code": code, "name": m["name"], "market": m["market"]})
+                if len(results) >= limit:
+                    break
+        if results:
+            return results
 
     # 2) 이름 완전 일치
     if q in _name_map:
