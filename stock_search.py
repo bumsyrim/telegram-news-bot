@@ -3,14 +3,14 @@ KRX 코스피/코스닥 종목 검색 모듈
 - stock_list.json에 24시간 캐시
 - 메모리 내 _code_map, _name_map으로 빠른 검색
 """
+import datetime
 import json
 import logging
 import time
 import unicodedata
 from pathlib import Path
 
-import requests
-from bs4 import BeautifulSoup
+from pykrx import stock as krx_stock
 
 log = logging.getLogger(__name__)
 
@@ -25,34 +25,17 @@ def _normalize(s: str) -> str:
     return unicodedata.normalize("NFC", s).strip()
 
 
-def _fetch_market(market_type: str) -> list:
-    """KIND에서 시장별 종목 다운로드. market_type: 'kospi' 또는 'kosdaq'"""
-    url = "http://kind.krx.co.kr/corpgeneral/corpList.do"
-    params = {"method": "download", "searchType": "13"}
-    if market_type == "kosdaq":
-        params["marketType"] = "kosdaqMkt"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "http://kind.krx.co.kr/",
-    }
-    resp = requests.get(url, params=params, headers=headers, timeout=30)
-    resp.raise_for_status()
-    resp.encoding = "euc-kr"
-    soup = BeautifulSoup(resp.text, "lxml")
-    table = soup.find("table")
-    if not table:
-        log.warning("KIND 응답에서 table을 찾지 못함 (%s)", market_type)
-        return []
-    market_name = "KOSDAQ" if market_type == "kosdaq" else "KOSPI"
+def _fetch_all_stocks() -> list:
+    """pykrx로 코스피+코스닥 전체 종목 다운로드."""
+    date = datetime.datetime.now().strftime("%Y%m%d")
     stocks = []
-    for row in table.find_all("tr")[1:]:
-        cols = row.find_all("td")
-        if len(cols) < 2:
-            continue
-        name = cols[0].get_text(strip=True)
-        code = cols[1].get_text(strip=True).zfill(6)
-        if name and len(code) == 6 and code.isdigit():
-            stocks.append({"name": name, "code": code, "market": market_name})
+    for market in ("KOSPI", "KOSDAQ"):
+        tickers = krx_stock.get_market_ticker_list(date, market=market)
+        for ticker in tickers:
+            name = krx_stock.get_market_ticker_name(ticker)
+            if name:
+                stocks.append({"code": ticker, "name": name, "market": market})
+        log.info("pykrx %s 종목 수집: %d개", market, len(tickers))
     return stocks
 
 
@@ -91,9 +74,9 @@ def load_stocks():
     """봇 시작 시 1회 호출. 캐시 유효하면 캐시 사용, 없으면 KRX에서 다운로드."""
     stocks = _load_cache()
     if stocks is None:
-        log.info("KRX 종목 목록 다운로드 중...")
+        log.info("KRX 종목 목록 다운로드 중 (pykrx)...")
         try:
-            stocks = _fetch_market("kospi") + _fetch_market("kosdaq")
+            stocks = _fetch_all_stocks()
             _save_cache(stocks)
             log.info("종목 목록 다운로드 완료: %d개", len(stocks))
         except Exception as e:
