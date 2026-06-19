@@ -592,6 +592,7 @@ def handle_stock_cmd(chat_id: int, args: str):
             [[
                 {"text": "✅ 구독 등록", "callback_data": f"subscribe_{r['code']}"},
                 {"text": "📊 즉시 조회", "callback_data": f"report_{r['code']}"},
+                {"text": "💰 현재가", "callback_data": f"price_{r['code']}"},
             ]],
         )
     send_message(chat_id, f"💡 더 빠른 검색: @ptw_aiwkeekly_bot {query}")
@@ -628,7 +629,7 @@ def handle_inline_query(inline_query_id: str, query: str):
                         ],
                         [
                             {"text": "📊 즉시 조회", "callback_data": f"report_{s['code']}"},
-                            {"text": "❌ 취소", "callback_data": "cancel"},
+                            {"text": "💰 현재가", "callback_data": f"price_{s['code']}"},
                         ],
                     ]
                 },
@@ -667,6 +668,29 @@ def _edit_message(chat_id: int, message_id: int, text: str):
     )
 
 
+def _fetch_price_msg(code: str, market: str, name: str) -> str:
+    """yfinance로 현재가 조회. 실패 시 None 반환."""
+    import yfinance as yf
+    import datetime
+
+    suffix = ".KQ" if market == "KOSDAQ" else ".KS"
+    df = yf.Ticker(f"{code}{suffix}").history(period="2d")
+    if df.empty:
+        return None
+    price = df["Close"].iloc[-1]
+    prev_close = df["Close"].iloc[-2] if len(df) >= 2 else price
+    change = price - prev_close
+    pct = (change / prev_close * 100) if prev_close else 0
+    sign = "+" if change >= 0 else ""
+    now_kst = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
+    return (
+        f"💰 <b>{name}</b> (<code>{code}</code>)\n"
+        f"현재가: {price:,.0f}원\n"
+        f"전일대비: {sign}{change:,.0f}원 ({sign}{pct:.2f}%)\n"
+        f"⏰ {now_kst.strftime('%Y-%m-%d %H:%M')} 기준 (KST)"
+    )
+
+
 def handle_callback_query(callback_query_id: str, chat_id: int, message_id: int, data: str):
     if data.startswith("subscribe_"):
         code = data[len("subscribe_"):]
@@ -697,6 +721,20 @@ def handle_callback_query(callback_query_id: str, chat_id: int, message_id: int,
             )
         else:
             _answer_callback(callback_query_id, f"{name}은(는) 구독 중이 아닙니다.", alert=True)
+
+    elif data.startswith("price_"):
+        code = data[len("price_"):]
+        s = stock_search.get_by_code(code)
+        if not s:
+            _answer_callback(callback_query_id, "❌ 종목 정보를 찾을 수 없습니다.", alert=True)
+            return
+        _answer_callback(callback_query_id, "📡 조회 중...")
+        try:
+            msg = _fetch_price_msg(s["code"], s["market"], s["name"])
+            send_message(chat_id, msg if msg else f"❌ {s['name']} 현재가를 가져올 수 없습니다. (장 마감 또는 데이터 없음)")
+        except Exception as e:
+            log.error("현재가 조회 실패: %s", e, exc_info=True)
+            send_message(chat_id, "❌ 현재가 조회 중 오류가 발생했습니다.")
 
     elif data.startswith("report_"):
         code = data[len("report_"):]
