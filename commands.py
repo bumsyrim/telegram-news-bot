@@ -647,9 +647,22 @@ def handle_stock_cmd(chat_id: int, args: str):
         if not subs:
             send_message(chat_id, "구독 중인 종목이 없습니다.\n/종목 등록 &lt;코드&gt;로 등록하세요.")
             return
-        lines = [f"📋 <b>내 구독 종목</b> ({len(subs)}개)\n"]
+        market_labels = {"KOSPI": "코스피", "KOSDAQ": "코스닥", "ETF": "ETF"}
+        _DEFAULT = {"news_count": 5, "board_count": 3, "days": 7}
+        lines = [f"📋 <b>내 구독 종목</b> (총 {len(subs)}개)"]
         for code, info in subs.items():
-            lines.append(f"• <b>{info['name']}</b> (<code>{code}</code>, {info['market']})")
+            ml = market_labels.get(info["market"], info["market"])
+            nc = info.get("news_count", _DEFAULT["news_count"])
+            bc = info.get("board_count", _DEFAULT["board_count"])
+            dy = info.get("days", _DEFAULT["days"])
+            cfg = f"뉴스 {nc}건 · 토론방 {bc}건 · {dy}일"
+            if nc == _DEFAULT["news_count"] and bc == _DEFAULT["board_count"] and dy == _DEFAULT["days"]:
+                cfg += " (기본값)"
+            lines.append(
+                f"\n• <b>{info['name']}</b> [<code>{code}</code>] {ml}\n"
+                f"  {cfg}\n"
+                f"  /종목 설정 {code}  |  /종목 해제 {code}"
+            )
         send_message(chat_id, "\n".join(lines))
         return
 
@@ -876,9 +889,22 @@ def handle_callback_query(callback_query_id: str, chat_id: int, message_id: int,
         if not subs:
             _answer_callback(callback_query_id, "구독 중인 종목이 없습니다.", alert=True)
         else:
-            lines = [f"📋 <b>내 구독 종목</b> ({len(subs)}개)\n"]
+            market_labels = {"KOSPI": "코스피", "KOSDAQ": "코스닥", "ETF": "ETF"}
+            _DEFAULT = {"news_count": 5, "board_count": 3, "days": 7}
+            lines = [f"📋 <b>내 구독 종목</b> (총 {len(subs)}개)"]
             for code, info in subs.items():
-                lines.append(f"• <b>{info['name']}</b> (<code>{code}</code>, {info['market']})")
+                ml = market_labels.get(info["market"], info["market"])
+                nc = info.get("news_count", _DEFAULT["news_count"])
+                bc = info.get("board_count", _DEFAULT["board_count"])
+                dy = info.get("days", _DEFAULT["days"])
+                cfg = f"뉴스 {nc}건 · 토론방 {bc}건 · {dy}일"
+                if nc == _DEFAULT["news_count"] and bc == _DEFAULT["board_count"] and dy == _DEFAULT["days"]:
+                    cfg += " (기본값)"
+                lines.append(
+                    f"\n• <b>{info['name']}</b> [<code>{code}</code>] {ml}\n"
+                    f"  {cfg}\n"
+                    f"  /종목 설정 {code}  |  /종목 해제 {code}"
+                )
             _answer_callback(callback_query_id)
             send_message(chat_id, "\n".join(lines))
 
