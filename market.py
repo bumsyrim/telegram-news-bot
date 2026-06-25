@@ -467,34 +467,50 @@ def fetch_market_brief(brief_type: str) -> dict:
 
 
 def _fetch_market_news() -> list:
-    """네이버 금융 시황 뉴스 헤드라인 3개 크롤링."""
-    url = "https://finance.naver.com/news/maket_news.naver"
+    """네이버 검색 API로 오늘 시황 뉴스 헤드라인 3개 수집."""
+    import os
+    from bs4 import BeautifulSoup as _BS
+
+    client_id = os.getenv("NAVER_CLIENT_ID", "")
+    client_secret = os.getenv("NAVER_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        log.warning("NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 미설정")
+        return []
+
+    today = datetime.now(KST).strftime("%Y%m%d")
     try:
         resp = requests.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+            "https://openapi.naver.com/v1/search/news.json",
+            headers={
+                "X-Naver-Client-Id": client_id,
+                "X-Naver-Client-Secret": client_secret,
+            },
+            params={"query": "코스피 시황", "display": 10, "sort": "date"},
             timeout=10,
         )
-        resp.encoding = "euc-kr"
         resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "lxml")
 
         headlines = []
-        # 네이버 금융 시황 뉴스 목록 셀렉터 순서대로 시도
-        for sel in ["dl.articleSubject dt a", "ul.newsList li dt a", "dl dt a", ".articleSubject a"]:
-            for a in soup.select(sel):
-                text = a.get_text(strip=True)
-                if text and len(text) > 5:
-                    headlines.append(text)
-                if len(headlines) >= 3:
-                    break
-            if headlines:
+        for item in resp.json().get("items", []):
+            # pubDate 예: "Wed, 25 Jun 2026 09:30:00 +0900"
+            pub = item.get("pubDate", "")
+            try:
+                from datetime import datetime as _dt
+                pub_dt = _dt.strptime(pub, "%a, %d %b %Y %H:%M:%S %z")
+                if pub_dt.strftime("%Y%m%d") != today:
+                    continue
+            except Exception:
+                pass  # 날짜 파싱 실패 시 포함
+            title = _BS(item.get("title", ""), "lxml").get_text()
+            if title:
+                headlines.append(title)
+            if len(headlines) >= 3:
                 break
 
-        log.info("시황 뉴스 크롤링: %d건", len(headlines))
+        log.info("시황 뉴스 API: %d건 수집", len(headlines))
         return headlines
     except Exception as e:
-        log.warning("시황 뉴스 크롤링 실패: %s", e)
+        log.warning("시황 뉴스 API 실패: %s", e)
         return []
 
 
