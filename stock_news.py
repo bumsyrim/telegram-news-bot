@@ -157,8 +157,8 @@ def collect_and_send(send_fn, news_count: int = 5, board_count: int = 3, days: i
             u_board = info.get("board_count", board_count)
             u_days = info.get("days", days)
 
-            news_items = fetch_naver_news(name, code=code, display=u_news, days=u_days)
-            board_items = fetch_naver_board(code)[:u_board]
+            news_items = fetch_naver_news(name, code=code, display=u_news, days=u_days) if u_news > 0 else []
+            board_items = fetch_naver_board(code)[:u_board] if u_board > 0 else []
 
             messages = []
             for item in news_items:
@@ -192,8 +192,8 @@ def fetch_news_for_report(code: str, name: str, market: str,
     즉시 조회 버튼용: seen 필터 없이 최신 뉴스/토론방 수집 후 메시지 문자열 반환.
     새 글 없으면 None 반환.
     """
-    news_items = fetch_naver_news(name, code=code, display=news_count, days=days)
-    board_items = fetch_naver_board(code)
+    news_items = fetch_naver_news(name, code=code, display=news_count, days=days) if news_count > 0 else []
+    board_items = fetch_naver_board(code) if board_count > 0 else []
 
     messages = []
     for item in news_items:

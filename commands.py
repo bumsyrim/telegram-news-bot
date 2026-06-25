@@ -580,15 +580,15 @@ def handle_stock_settings(chat_id: int, code: str):
     keyboard = [
         [{"text": "〔 뉴스 건수 〕", "callback_data": "noop"}],
         [
+            {"text": "0건", "callback_data": f"news_count_{c}_0"},
             {"text": "3건", "callback_data": f"news_count_{c}_3"},
             {"text": "5건", "callback_data": f"news_count_{c}_5"},
-            {"text": "10건", "callback_data": f"news_count_{c}_10"},
         ],
         [{"text": "〔 토론방 건수 〕", "callback_data": "noop"}],
         [
+            {"text": "0건", "callback_data": f"board_count_{c}_0"},
             {"text": "3건", "callback_data": f"board_count_{c}_3"},
             {"text": "5건", "callback_data": f"board_count_{c}_5"},
-            {"text": "10건", "callback_data": f"board_count_{c}_10"},
         ],
         [{"text": "〔 조회 기간 〕", "callback_data": "noop"}],
         [
