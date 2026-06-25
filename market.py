@@ -344,6 +344,258 @@ def send_market_report():
     log.info("금융 알림 완료: 성공 %d명 / 실패 %d명", sent, failed)
 
 
+# ── 주요 종목 티커 (midday 조회용) ──────────────────────────
+_MAJOR_STOCKS = [
+    ("005930.KS", "삼성전자"),
+    ("000660.KS", "SK하이닉스"),
+    ("035720.KS", "카카오"),
+]
+
+
+def fetch_market_brief(brief_type: str) -> dict:
+    """brief_type: morning / midday / closing. yfinance 기반 시장 브리핑 데이터 수집."""
+    data: dict = {"brief_type": brief_type, "time": datetime.now(KST)}
+
+    # 한국 지수
+    for symbol, key in [("^KS11", "kospi"), ("^KQ11", "kosdaq"), ("^KS200", "kospi200")]:
+        try:
+            fi = yf.Ticker(symbol).fast_info
+            price, prev = fi.last_price, fi.previous_close
+            if price and prev and prev != 0:
+                data[key] = {"price": price, "change": price - prev,
+                             "change_pct": (price - prev) / prev * 100}
+        except Exception as e:
+            log.warning("%s 조회 실패: %s", symbol, e)
+
+    # 미국 지수 (morning/closing에서 사용)
+    for symbol, key in [("^IXIC", "nasdaq"), ("^GSPC", "sp500"), ("^DJI", "dow")]:
+        try:
+            fi = yf.Ticker(symbol).fast_info
+            price, prev = fi.last_price, fi.previous_close
+            if price and prev and prev != 0:
+                data[key] = {"price": price, "change": price - prev,
+                             "change_pct": (price - prev) / prev * 100}
+        except Exception as e:
+            log.warning("%s 조회 실패: %s", symbol, e)
+
+    # 코스피200 야간선물 (morning에서 사용)
+    if brief_type == "morning":
+        try:
+            data["futures"] = fetch_kospi200_futures()
+        except Exception as e:
+            log.warning("야간선물 조회 실패: %s", e)
+
+    # 주요 종목 현황 (midday에서 사용)
+    if brief_type == "midday":
+        major = []
+        for ticker_sym, name in _MAJOR_STOCKS:
+            try:
+                fi = yf.Ticker(ticker_sym).fast_info
+                price, prev = fi.last_price, fi.previous_close
+                if price and prev and prev != 0:
+                    pct = (price - prev) / prev * 100
+                    major.append({"name": name, "price": price, "change_pct": pct})
+            except Exception as e:
+                log.warning("%s 조회 실패: %s", ticker_sym, e)
+        data["major_stocks"] = major
+
+    return data
+
+
+def _generate_ai_analysis(data: dict, brief_type: str) -> str:
+    """Claude API로 시장 데이터 기반 분석 생성."""
+    try:
+        import anthropic
+        from config import ANTHROPIC_API_KEY
+        if not ANTHROPIC_API_KEY or ANTHROPIC_API_KEY == "dummy":
+            return "(AI 분석: ANTHROPIC_API_KEY 미설정)"
+
+        def _pct(d, key):
+            item = d.get(key)
+            if not item:
+                return "데이터 없음"
+            pct = item["change_pct"]
+            return f"{'+' if pct >= 0 else ''}{pct:.2f}%"
+
+        if brief_type == "morning":
+            futures_info = ""
+            if data.get("futures"):
+                fp = data["futures"]["change_pct"]
+                futures_info = f"코스피200 야간선물: {'+' if fp >= 0 else ''}{fp:.2f}%"
+            context = (
+                f"전일 코스피: {_pct(data, 'kospi')}, 코스닥: {_pct(data, 'kosdaq')}\n"
+                f"{futures_info}\n"
+                f"간밤 미국: 나스닥 {_pct(data, 'nasdaq')}, S&P500 {_pct(data, 'sp500')}, 다우 {_pct(data, 'dow')}"
+            )
+            prompt = f"다음 시장 데이터를 보고 오늘 한국 주식시장 출발 전망을 3문장으로 간결하게 분석해주세요:\n{context}"
+
+        elif brief_type == "midday":
+            stocks = ", ".join(
+                f"{s['name']} {'+' if s['change_pct'] >= 0 else ''}{s['change_pct']:.2f}%"
+                for s in data.get("major_stocks", [])
+            )
+            context = (
+                f"코스피: {_pct(data, 'kospi')}, 코스닥: {_pct(data, 'kosdaq')}, 코스피200: {_pct(data, 'kospi200')}\n"
+                f"주요 종목: {stocks}"
+            )
+            prompt = f"다음 장중 데이터를 보고 현재 한국 주식시장 시황을 3문장으로 간결하게 분석해주세요:\n{context}"
+
+        else:  # closing
+            context = (
+                f"코스피: {_pct(data, 'kospi')}, 코스닥: {_pct(data, 'kosdaq')}, 코스피200: {_pct(data, 'kospi200')}\n"
+                f"미국 시장(전일): 나스닥 {_pct(data, 'nasdaq')}, S&P500 {_pct(data, 'sp500')}, 다우 {_pct(data, 'dow')}"
+            )
+            prompt = f"다음 장마감 데이터를 보고 오늘 시장 특징과 내일 전망을 3문장으로 간결하게 분석해주세요:\n{context}"
+
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return msg.content[0].text.strip()
+    except Exception as e:
+        log.warning("AI 분석 생성 실패: %s", e)
+        return "(AI 분석을 생성할 수 없습니다)"
+
+
+def format_market_brief(data: dict, brief_type: str, ai_analysis: str = "") -> str:
+    """브리핑 데이터를 텔레그램 메시지 문자열로 포맷."""
+    SEP = "──────────────────"
+    now: datetime = data.get("time", datetime.now(KST))
+    date_str = now.strftime("%Y-%m-%d")
+
+    def _idx(key, name, decimals=2):
+        item = data.get(key)
+        if not item:
+            return f"{name}: 데이터 없음"
+        p, pct = item["price"], item["change_pct"]
+        sign = "+" if pct >= 0 else ""
+        arrow = "▲" if pct >= 0 else "▼"
+        return f"{name}: {p:,.{decimals}f} {arrow} {sign}{pct:.2f}%"
+
+    lines = []
+
+    if brief_type == "morning":
+        lines += [
+            f"📊 장 시작 전 브리핑 [{date_str} 08:30 KST]",
+            "",
+            SEP,
+            "전일 코스피",
+            SEP,
+            _idx("kospi",  "코스피 "),
+            _idx("kosdaq", "코스닥 "),
+        ]
+        if data.get("futures"):
+            fp = data["futures"]["change_pct"]
+            fv = data["futures"]["price"]
+            sign = "+" if fp >= 0 else ""
+            arrow = "▲" if fp >= 0 else "▼"
+            lines.append(f"야간선물: {fv:,.2f} {arrow} {sign}{fp:.2f}%")
+        # 출발 전망 힌트 (야간선물 또는 미국 시장 기반)
+        ref_pct = data.get("futures", {}).get("change_pct") or data.get("nasdaq", {}).get("change_pct")
+        if ref_pct is not None:
+            if ref_pct >= 0.5:
+                hint = "→ 강보합 이상 출발 예상"
+            elif ref_pct >= 0:
+                hint = "→ 강보합 출발 예상"
+            elif ref_pct >= -0.5:
+                hint = "→ 약보합 출발 예상"
+            else:
+                hint = "→ 약세 출발 예상"
+            lines.append(hint)
+        lines += [
+            "",
+            SEP,
+            "간밤 미국 시장",
+            SEP,
+            _idx("nasdaq", "나스닥  ", 0),
+            _idx("sp500",  "S&P500  ", 0),
+            _idx("dow",    "다우존스", 0),
+        ]
+        lines += [
+            "",
+            SEP,
+            "AI 투자 전략",
+            SEP,
+            ai_analysis or "(분석 없음)",
+            "",
+            "⏰ 장 시작: 09:00 KST",
+            "다음 리포트: 12:00 (장 중간)",
+        ]
+
+    elif brief_type == "midday":
+        lines += [
+            f"📊 장 중간 현황 [{date_str} 12:00 KST]",
+            "",
+            SEP,
+            "현재 지수",
+            SEP,
+            _idx("kospi",   "코스피  "),
+            _idx("kosdaq",  "코스닥  "),
+            _idx("kospi200","코스피200"),
+        ]
+        major = data.get("major_stocks", [])
+        if major:
+            lines += ["", SEP, "주요 종목", SEP]
+            for s in major:
+                pct = s["change_pct"]
+                sign = "+" if pct >= 0 else ""
+                arrow = "▲" if pct >= 0 else "▼"
+                lines.append(f"{s['name']}: {s['price']:,.0f}원 {arrow} {sign}{pct:.2f}%")
+        lines += [
+            "",
+            SEP,
+            "AI 시황 분석",
+            SEP,
+            ai_analysis or "(분석 없음)",
+            "",
+            "⏰ 다음 리포트: 15:30 (장 마감)",
+        ]
+
+    else:  # closing
+        lines += [
+            f"📊 장 마감 리포트 [{date_str} 15:30 KST]",
+            "",
+            SEP,
+            "최종 지수",
+            SEP,
+            _idx("kospi",    "코스피  "),
+            _idx("kosdaq",   "코스닥  "),
+            _idx("kospi200", "코스피200"),
+            "",
+            SEP,
+            "간밤 미국 시장 (참고)",
+            SEP,
+            _idx("nasdaq", "나스닥  ", 0),
+            _idx("sp500",  "S&P500  ", 0),
+            _idx("dow",    "다우존스", 0),
+            "",
+            SEP,
+            "AI 내일 전망",
+            SEP,
+            ai_analysis or "(분석 없음)",
+            "",
+            "⏰ 다음 리포트: 내일 08:30 (장 시작 전)",
+        ]
+
+    return "\n".join(lines)
+
+
+def send_market_brief_report(brief_type: str):
+    """brief_type에 맞는 시장 브리핑을 전체 구독자에게 발송."""
+    from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+
+    data = fetch_market_brief(brief_type)
+    ai_text = _generate_ai_analysis(data, brief_type)
+    msg = format_market_brief(data, brief_type, ai_text)
+
+    subscribers = _load_subscribers(TELEGRAM_CHAT_ID)
+    api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    sent, failed = _broadcast(api_url, subscribers, msg)
+    log.info("시장 브리핑(%s) 발송 완료: 성공 %d명 / 실패 %d명", brief_type, sent, failed)
+
+
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,

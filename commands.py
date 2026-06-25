@@ -28,7 +28,7 @@ ENV_FILE = Path(".env")
 # 누구나 사용 가능한 명령어 (NFC 정규화된 소문자로 저장)
 PUBLIC_COMMANDS = {
     unicodedata.normalize("NFC", c)
-    for c in {"/start", "/stop", "/날씨", "/weather", "/location", "/코스피", "/kospi", "/금융", "/finance", "/help", "/list", "/종목"}
+    for c in {"/start", "/stop", "/날씨", "/weather", "/location", "/코스피", "/kospi", "/금융", "/finance", "/help", "/list", "/종목", "/브리핑"}
 }
 
 log = logging.getLogger(__name__)
@@ -46,6 +46,14 @@ _STOCK_HELP = (
     "→ 탭으로 선택 후 버튼으로 동작 선택"
 )
 
+_BRIEF_HELP = (
+    "\n[📊 시장 브리핑]\n"
+    "/브리핑 now     - 현재 시점 시장 브리핑\n"
+    "/브리핑 morning - 장 시작 전 브리핑\n"
+    "/브리핑 midday  - 장 중간 브리핑\n"
+    "/브리핑 closing - 장 마감 브리핑"
+)
+
 _COMMON_HELP = (
     "[📋 공통 명령어]\n"
     "/start - 뉴스 구독 등록\n"
@@ -55,9 +63,10 @@ _COMMON_HELP = (
     "/location 위치명 - 날씨 위치 변경\n"
     "/코스피 - 코스피 지수 조회\n"
     "/금융 - 미국 시장 지표 조회\n"
+    "/브리핑 now - 현재 시점 시장 브리핑\n"
     "/종목 - 종목 검색/구독\n"
     "/help - 도움말"
-) + _STOCK_HELP
+) + _STOCK_HELP + _BRIEF_HELP
 
 HELP_TEXT = (
     "[📋 사용 가능한 명령어]\n"
@@ -68,9 +77,10 @@ HELP_TEXT = (
     "/location 위치명 - 날씨 위치 변경\n"
     "/코스피 - 코스피 지수 조회\n"
     "/금융 - 미국 시장 지표 조회\n"
+    "/브리핑 now - 현재 시점 시장 브리핑\n"
     "/종목 - 종목 검색/구독\n"
     "/help - 도움말"
-) + _STOCK_HELP
+) + _STOCK_HELP + _BRIEF_HELP
 
 ADMIN_HELP_TEXT = (
     "[👑 관리자 명령어]\n"
@@ -84,7 +94,7 @@ ADMIN_HELP_TEXT = (
     "/promote chat_id - 관리자 추가\n"
     "/demote chat_id - 관리자 권한 제거\n"
     "\n"
-) + _COMMON_HELP
+) + _COMMON_HELP + _BRIEF_HELP
 
 
 # ── 관리자 목록 읽기/쓰기 (.env ADMIN_IDS) ───────────────
@@ -281,6 +291,49 @@ def handle_finance_query(chat_id: int):
     except Exception as e:
         log.error("금융 조회 실패: %s", e, exc_info=True)
         send_message(chat_id, "❌ 시장 데이터를 가져올 수 없습니다. 잠시 후 다시 시도해주세요.")
+
+
+def handle_brief_cmd(chat_id: int, args: str):
+    from market import fetch_market_brief, format_market_brief, _generate_ai_analysis
+    import datetime as _dt
+
+    arg = args.strip().lower()
+    if not arg:
+        send_message(
+            chat_id,
+            "📊 <b>시장 브리핑</b>\n\n"
+            "/브리핑 now     - 현재 시점 자동 판단\n"
+            "/브리핑 morning - 장 시작 전 브리핑\n"
+            "/브리핑 midday  - 장 중간 브리핑\n"
+            "/브리핑 closing - 장 마감 브리핑\n\n"
+            "자동 발송: 08:30 / 12:00 / 15:30 KST"
+        )
+        return
+
+    if arg == "now":
+        now_kst = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=9)))
+        h = now_kst.hour
+        if h < 9:
+            brief_type = "morning"
+        elif h < 15:
+            brief_type = "midday"
+        else:
+            brief_type = "closing"
+    elif arg in ("morning", "midday", "closing"):
+        brief_type = arg
+    else:
+        send_message(chat_id, "❌ 사용법: /브리핑 now | morning | midday | closing")
+        return
+
+    send_message(chat_id, f"🔍 {brief_type} 브리핑 조회 중...")
+    try:
+        data = fetch_market_brief(brief_type)
+        ai_text = _generate_ai_analysis(data, brief_type)
+        msg = format_market_brief(data, brief_type, ai_text)
+        send_message(chat_id, msg)
+    except Exception as e:
+        log.error("브리핑 조회 실패: %s", e, exc_info=True)
+        send_message(chat_id, "❌ 브리핑을 가져올 수 없습니다. 잠시 후 다시 시도해주세요.")
 
 
 def handle_kospi_query(chat_id: int):
@@ -969,6 +1022,7 @@ def dispatch(chat_id: int, text: str, username: str = ""):
         N("/help"):     lambda: send_message(chat_id, ADMIN_HELP_TEXT if is_admin(chat_id) else HELP_TEXT),
         N("/list"):     lambda: handle_list(chat_id),
         N("/종목"):     lambda: handle_stock_cmd(chat_id, args),
+        N("/브리핑"):   lambda: handle_brief_cmd(chat_id, args),
     }
     admin_handlers = {
         N("/add"):         lambda: handle_add(chat_id, args),
@@ -1023,10 +1077,29 @@ def _stock_news_report():
     log.info("종목 뉴스 수집 완료")
 
 
+def _brief_report(brief_type: str):
+    log.info("시장 브리핑 실행: %s", brief_type)
+    try:
+        from market import send_market_brief_report
+        send_market_brief_report(brief_type)
+    except Exception as e:
+        log.error("시장 브리핑 오류 (%s): %s", brief_type, e, exc_info=True)
+    log.info("시장 브리핑 완료: %s", brief_type)
+
+
 def _run_scheduler():
-    fire_at = _kst_to_local(7, 0)
-    log.info("스케줄러 시작: 매일 %s (로컬) = 07:00 KST", fire_at)
-    schedule.every().day.at(fire_at).do(_morning_report)
+    fire_at_morning = _kst_to_local(7, 0)
+    fire_at_brief_morning = _kst_to_local(8, 30)
+    fire_at_brief_midday = _kst_to_local(12, 0)
+    fire_at_brief_closing = _kst_to_local(15, 30)
+    log.info(
+        "스케줄러 시작: 날씨/금융=%s, 브리핑=%s/%s/%s (로컬)",
+        fire_at_morning, fire_at_brief_morning, fire_at_brief_midday, fire_at_brief_closing,
+    )
+    schedule.every().day.at(fire_at_morning).do(_morning_report)
+    schedule.every().day.at(fire_at_brief_morning).do(lambda: _brief_report("morning"))
+    schedule.every().day.at(fire_at_brief_midday).do(lambda: _brief_report("midday"))
+    schedule.every().day.at(fire_at_brief_closing).do(lambda: _brief_report("closing"))
     schedule.every(30).minutes.do(_stock_news_report)
     while True:
         schedule.run_pending()
