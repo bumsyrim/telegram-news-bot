@@ -449,8 +449,8 @@ def fetch_market_brief(brief_type: str) -> dict:
         except Exception as e:
             log.warning("야간선물 조회 실패: %s", e)
 
-    # 주요 종목 현황 (midday에서 사용)
-    if brief_type == "midday":
+    # 주요 종목 현황 (midday + closing에서 사용)
+    if brief_type in ("midday", "closing"):
         major = []
         for ticker_sym, name in _MAJOR_STOCKS:
             try:
@@ -462,6 +462,36 @@ def fetch_market_brief(brief_type: str) -> dict:
             except Exception as e:
                 log.warning("%s 조회 실패: %s", ticker_sym, e)
         data["major_stocks"] = major
+
+    # 수급 데이터 (closing 전용, pykrx)
+    if brief_type == "closing":
+        _today = datetime.now(KST).strftime("%Y%m%d")
+        try:
+            from pykrx import stock as _pykrx
+            adv_df = _pykrx.get_market_advancing_count(_today, "KOSPI")
+            if adv_df is not None and not adv_df.empty:
+                row = adv_df.iloc[-1]
+                data["advancing"] = int(row.get("상승", 0))
+                data["declining"] = int(row.get("하락", 0))
+        except Exception as e:
+            log.warning("pykrx 상승/하락 조회 실패: %s", e)
+
+        try:
+            from pykrx import stock as _pykrx
+            net_df = _pykrx.get_market_net_purchases_of_equities(_today, _today, "KOSPI")
+            if net_df is not None and not net_df.empty:
+                val_col = next(
+                    (c for c in ["순매수거래대금", "순매수", net_df.columns[-1]] if c in net_df.columns),
+                    None,
+                )
+                if val_col:
+                    supply = {}
+                    for label, idx_key in [("외국인", "외국인합계"), ("기관", "기관합계"), ("개인", "개인")]:
+                        if idx_key in net_df.index:
+                            supply[label] = int(net_df.loc[idx_key, val_col])
+                    data["supply"] = supply
+        except Exception as e:
+            log.warning("pykrx 수급 조회 실패: %s", e)
 
     return data
 
@@ -617,20 +647,39 @@ def format_market_brief(data: dict, brief_type: str, news_headlines: list = None
             SEP,
             "최종 지수",
             SEP,
-            _idx("kospi",    "코스피  "),
-            _idx("kosdaq",   "코스닥  "),
+            _idx("kospi",    "코스피   "),
+            _idx("kosdaq",   "코스닥   "),
             _idx("kospi200", "코스피200"),
-            "",
-            SEP,
-            "간밤 미국 시장 (참고)",
-            SEP,
-            _idx("nasdaq", "나스닥  ", 0),
-            _idx("sp500",  "S&P500  ", 0),
-            _idx("dow",    "다우존스", 0),
-        ] + _news_section() + [
-            "",
-            "⏰ 다음 리포트: 내일 08:30 (장 시작 전)",
         ]
+
+        # 시총 상위 5개 종목
+        major = data.get("major_stocks", [])
+        if major:
+            lines += ["", SEP, "시총 상위 5개 종목", SEP]
+            for s in major:
+                pct = s["change_pct"]
+                sign = "+" if pct >= 0 else ""
+                arrow = "▲" if pct >= 0 else "▼"
+                lines.append(f"{s['name']}: {s['price']:,.0f}원 {arrow} {sign}{pct:.2f}%")
+
+        # 오늘 특징 (상승/하락 종목 수 + 수급)
+        adv = data.get("advancing")
+        dec = data.get("declining")
+        supply = data.get("supply", {})
+        if adv is not None or supply:
+            lines += ["", SEP, "오늘 특징", SEP]
+            if adv is not None and dec is not None:
+                lines.append(f"상승 종목: {adv:,}개 / 하락 종목: {dec:,}개")
+            for label, key in [("외국인", "외국인"), ("기관  ", "기관"), ("개인  ", "개인")]:
+                val = supply.get(key)
+                if val is not None:
+                    val_억 = val / 1e8
+                    sign = "+" if val_억 >= 0 else ""
+                    direction = "순매수" if val_억 >= 0 else "순매도"
+                    lines.append(f"{label}: {sign}{val_억:,.0f}억 ({direction})")
+
+        lines += _news_section()
+        lines += ["", "⏰ 다음 리포트: 내일 08:30 (장 시작 전)"]
 
     return "\n".join(lines)
 

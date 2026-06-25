@@ -311,13 +311,15 @@ def handle_brief_cmd(chat_id: int, args: str):
         return
 
     if arg == "now":
-        now_kst = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=9)))
-        h = now_kst.hour
-        if h < 9:
+        # 서버 로컬 시간과 무관하게 KST(UTC+9) 기준으로 판단
+        _KST = _dt.timezone(_dt.timedelta(hours=9))
+        now_kst = _dt.datetime.now(_KST)
+        h, m = now_kst.hour, now_kst.minute
+        if h < 9:                        # 00:00~08:59 KST → 장 시작 전
             brief_type = "morning"
-        elif h < 15:
+        elif h < 15 or (h == 15 and m == 0):  # 09:00~15:00 KST → 장 중
             brief_type = "midday"
-        else:
+        else:                            # 15:00+ KST → 장 마감
             brief_type = "closing"
     elif arg in ("morning", "midday", "closing"):
         brief_type = arg
