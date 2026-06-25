@@ -344,11 +344,13 @@ def send_market_report():
     log.info("금융 알림 완료: 성공 %d명 / 실패 %d명", sent, failed)
 
 
-# ── 주요 종목 티커 (midday 조회용) ──────────────────────────
+# ── 주요 종목 티커 (코스피 시총 상위 5개) ────────────────────
 _MAJOR_STOCKS = [
     ("005930.KS", "삼성전자"),
     ("000660.KS", "SK하이닉스"),
-    ("035720.KS", "카카오"),
+    ("005935.KS", "삼성전자우"),
+    ("373220.KS", "LG에너지솔루션"),
+    ("005380.KS", "현대차"),
 ]
 
 
@@ -402,68 +404,53 @@ def fetch_market_brief(brief_type: str) -> dict:
     return data
 
 
-def _generate_ai_analysis(data: dict, brief_type: str) -> str:
-    """Claude API로 시장 데이터 기반 분석 생성."""
+def _fetch_market_news() -> list:
+    """네이버 금융 시황 뉴스 헤드라인 3개 크롤링."""
+    url = "https://finance.naver.com/news/maket_news.naver"
     try:
-        import anthropic
-        from config import ANTHROPIC_API_KEY
-        if not ANTHROPIC_API_KEY or ANTHROPIC_API_KEY == "dummy":
-            return "(AI 분석: ANTHROPIC_API_KEY 미설정)"
-
-        def _pct(d, key):
-            item = d.get(key)
-            if not item:
-                return "데이터 없음"
-            pct = item["change_pct"]
-            return f"{'+' if pct >= 0 else ''}{pct:.2f}%"
-
-        if brief_type == "morning":
-            futures_info = ""
-            if data.get("futures"):
-                fp = data["futures"]["change_pct"]
-                futures_info = f"코스피200 야간선물: {'+' if fp >= 0 else ''}{fp:.2f}%"
-            context = (
-                f"전일 코스피: {_pct(data, 'kospi')}, 코스닥: {_pct(data, 'kosdaq')}\n"
-                f"{futures_info}\n"
-                f"간밤 미국: 나스닥 {_pct(data, 'nasdaq')}, S&P500 {_pct(data, 'sp500')}, 다우 {_pct(data, 'dow')}"
-            )
-            prompt = f"다음 시장 데이터를 보고 오늘 한국 주식시장 출발 전망을 3문장으로 간결하게 분석해주세요:\n{context}"
-
-        elif brief_type == "midday":
-            stocks = ", ".join(
-                f"{s['name']} {'+' if s['change_pct'] >= 0 else ''}{s['change_pct']:.2f}%"
-                for s in data.get("major_stocks", [])
-            )
-            context = (
-                f"코스피: {_pct(data, 'kospi')}, 코스닥: {_pct(data, 'kosdaq')}, 코스피200: {_pct(data, 'kospi200')}\n"
-                f"주요 종목: {stocks}"
-            )
-            prompt = f"다음 장중 데이터를 보고 현재 한국 주식시장 시황을 3문장으로 간결하게 분석해주세요:\n{context}"
-
-        else:  # closing
-            context = (
-                f"코스피: {_pct(data, 'kospi')}, 코스닥: {_pct(data, 'kosdaq')}, 코스피200: {_pct(data, 'kospi200')}\n"
-                f"미국 시장(전일): 나스닥 {_pct(data, 'nasdaq')}, S&P500 {_pct(data, 'sp500')}, 다우 {_pct(data, 'dow')}"
-            )
-            prompt = f"다음 장마감 데이터를 보고 오늘 시장 특징과 내일 전망을 3문장으로 간결하게 분석해주세요:\n{context}"
-
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=300,
-            messages=[{"role": "user", "content": prompt}],
+        resp = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+            timeout=10,
         )
-        return msg.content[0].text.strip()
+        resp.encoding = "euc-kr"
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "lxml")
+
+        headlines = []
+        # 네이버 금융 시황 뉴스 목록 셀렉터 순서대로 시도
+        for sel in ["dl.articleSubject dt a", "ul.newsList li dt a", "dl dt a", ".articleSubject a"]:
+            for a in soup.select(sel):
+                text = a.get_text(strip=True)
+                if text and len(text) > 5:
+                    headlines.append(text)
+                if len(headlines) >= 3:
+                    break
+            if headlines:
+                break
+
+        log.info("시황 뉴스 크롤링: %d건", len(headlines))
+        return headlines
     except Exception as e:
-        log.warning("AI 분석 생성 실패: %s", e)
-        return "(AI 분석을 생성할 수 없습니다)"
+        log.warning("시황 뉴스 크롤링 실패: %s", e)
+        return []
 
 
-def format_market_brief(data: dict, brief_type: str, ai_analysis: str = "") -> str:
+def format_market_brief(data: dict, brief_type: str, news_headlines: list = None) -> str:
     """브리핑 데이터를 텔레그램 메시지 문자열로 포맷."""
+    if news_headlines is None:
+        news_headlines = []
     SEP = "──────────────────"
     now: datetime = data.get("time", datetime.now(KST))
     date_str = now.strftime("%Y-%m-%d")
+
+    def _news_section():
+        lines = ["", SEP, "오늘 시황 뉴스", SEP]
+        if news_headlines:
+            lines += [f"- {h}" for h in news_headlines]
+        else:
+            lines.append("(뉴스를 가져올 수 없습니다)")
+        return lines
 
     def _idx(key, name, decimals=2):
         item = data.get(key)
@@ -513,12 +500,8 @@ def format_market_brief(data: dict, brief_type: str, ai_analysis: str = "") -> s
             _idx("sp500",  "S&P500  ", 0),
             _idx("dow",    "다우존스", 0),
         ]
+        lines += _news_section()
         lines += [
-            "",
-            SEP,
-            "AI 투자 전략",
-            SEP,
-            ai_analysis or "(분석 없음)",
             "",
             "⏰ 장 시작: 09:00 KST",
             "다음 리포트: 12:00 (장 중간)",
@@ -543,12 +526,8 @@ def format_market_brief(data: dict, brief_type: str, ai_analysis: str = "") -> s
                 sign = "+" if pct >= 0 else ""
                 arrow = "▲" if pct >= 0 else "▼"
                 lines.append(f"{s['name']}: {s['price']:,.0f}원 {arrow} {sign}{pct:.2f}%")
+        lines += _news_section()
         lines += [
-            "",
-            SEP,
-            "AI 시황 분석",
-            SEP,
-            ai_analysis or "(분석 없음)",
             "",
             "⏰ 다음 리포트: 15:30 (장 마감)",
         ]
@@ -570,11 +549,7 @@ def format_market_brief(data: dict, brief_type: str, ai_analysis: str = "") -> s
             _idx("nasdaq", "나스닥  ", 0),
             _idx("sp500",  "S&P500  ", 0),
             _idx("dow",    "다우존스", 0),
-            "",
-            SEP,
-            "AI 내일 전망",
-            SEP,
-            ai_analysis or "(분석 없음)",
+        ] + _news_section() + [
             "",
             "⏰ 다음 리포트: 내일 08:30 (장 시작 전)",
         ]
@@ -587,8 +562,8 @@ def send_market_brief_report(brief_type: str):
     from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
     data = fetch_market_brief(brief_type)
-    ai_text = _generate_ai_analysis(data, brief_type)
-    msg = format_market_brief(data, brief_type, ai_text)
+    news = _fetch_market_news()
+    msg = format_market_brief(data, brief_type, news)
 
     subscribers = _load_subscribers(TELEGRAM_CHAT_ID)
     api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"

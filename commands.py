@@ -294,7 +294,7 @@ def handle_finance_query(chat_id: int):
 
 
 def handle_brief_cmd(chat_id: int, args: str):
-    from market import fetch_market_brief, format_market_brief, _generate_ai_analysis
+    from market import fetch_market_brief, format_market_brief, _fetch_market_news
     import datetime as _dt
 
     arg = args.strip().lower()
@@ -328,8 +328,8 @@ def handle_brief_cmd(chat_id: int, args: str):
     send_message(chat_id, f"🔍 {brief_type} 브리핑 조회 중...")
     try:
         data = fetch_market_brief(brief_type)
-        ai_text = _generate_ai_analysis(data, brief_type)
-        msg = format_market_brief(data, brief_type, ai_text)
+        news = _fetch_market_news()
+        msg = format_market_brief(data, brief_type, news)
         send_message(chat_id, msg)
     except Exception as e:
         log.error("브리핑 조회 실패: %s", e, exc_info=True)
