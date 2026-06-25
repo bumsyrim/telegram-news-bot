@@ -344,6 +344,59 @@ def send_market_report():
     log.info("금융 알림 완료: 성공 %d명 / 실패 %d명", sent, failed)
 
 
+def _fetch_naver_index(code: str) -> dict | None:
+    """네이버 금융 sise_index 페이지에서 현재가·등락 데이터 크롤링.
+
+    code: KOSPI / KOSDAQ / KPI200 / KOSPI200F
+    반환: {"price", "change", "change_pct"} 또는 실패 시 None
+    """
+    url = f"https://finance.naver.com/sise/sise_index.naver?code={code}"
+    try:
+        resp = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+            timeout=10,
+        )
+        resp.encoding = "euc-kr"
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "lxml")
+
+        price = change = change_pct = None
+
+        for row in soup.select("table.type_1 tr"):
+            th = row.select_one("th")
+            td = row.select_one("td")
+            if not th or not td:
+                continue
+            label = th.get_text(strip=True)
+            raw = td.get_text(strip=True)
+            is_down = "▼" in raw or "하락" in raw
+            val = _parse_number(raw.replace("▲", "").replace("▼", ""))
+            if val is None:
+                continue
+            if "현재가" in label:
+                price = val
+            elif "전일대비" in label:
+                change = -val if is_down else val
+            elif "등락률" in label:
+                change_pct = -val if is_down else val
+
+        if price is None:
+            log.warning("네이버 지수 파싱 실패 (code=%s)", code)
+            return None
+
+        if change_pct is None and change is not None:
+            prev = price - change
+            change_pct = (change / prev * 100) if prev else 0.0
+
+        log.info("네이버 지수 조회 성공 (code=%s): %.2f, %.2f%%", code, price, change_pct or 0)
+        return {"price": price, "change": change or 0.0, "change_pct": change_pct or 0.0}
+
+    except Exception as e:
+        log.warning("네이버 지수 조회 실패 (code=%s): %s", code, e)
+        return None
+
+
 # ── 주요 종목 티커 (코스피 시총 상위 5개) ────────────────────
 _MAJOR_STOCKS = [
     ("005930.KS", "삼성전자"),
@@ -355,21 +408,16 @@ _MAJOR_STOCKS = [
 
 
 def fetch_market_brief(brief_type: str) -> dict:
-    """brief_type: morning / midday / closing. yfinance 기반 시장 브리핑 데이터 수집."""
+    """brief_type: morning / midday / closing. 네이버 금융 크롤링 + yfinance 기반 브리핑 데이터 수집."""
     data: dict = {"brief_type": brief_type, "time": datetime.now(KST)}
 
-    # 한국 지수
-    for symbol, key in [("^KS11", "kospi"), ("^KQ11", "kosdaq"), ("^KS200", "kospi200")]:
-        try:
-            fi = yf.Ticker(symbol).fast_info
-            price, prev = fi.last_price, fi.previous_close
-            if price and prev and prev != 0:
-                data[key] = {"price": price, "change": price - prev,
-                             "change_pct": (price - prev) / prev * 100}
-        except Exception as e:
-            log.warning("%s 조회 실패: %s", symbol, e)
+    # 한국 지수 (네이버 금융 크롤링)
+    for naver_code, key in [("KOSPI", "kospi"), ("KOSDAQ", "kosdaq"), ("KPI200", "kospi200")]:
+        d = _fetch_naver_index(naver_code)
+        if d:
+            data[key] = d
 
-    # 미국 지수 (morning/closing에서 사용)
+    # 미국 지수 (yfinance)
     for symbol, key in [("^IXIC", "nasdaq"), ("^GSPC", "sp500"), ("^DJI", "dow")]:
         try:
             fi = yf.Ticker(symbol).fast_info
@@ -380,12 +428,11 @@ def fetch_market_brief(brief_type: str) -> dict:
         except Exception as e:
             log.warning("%s 조회 실패: %s", symbol, e)
 
-    # 코스피200 야간선물 (morning에서 사용)
+    # 코스피200 야간선물 (morning, 네이버 금융 크롤링)
     if brief_type == "morning":
-        try:
-            data["futures"] = fetch_kospi200_futures()
-        except Exception as e:
-            log.warning("야간선물 조회 실패: %s", e)
+        d = _fetch_naver_index("KOSPI200F")
+        if d:
+            data["futures"] = d
 
     # 주요 종목 현황 (midday에서 사용)
     if brief_type == "midday":
