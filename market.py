@@ -8,6 +8,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import FinanceDataReader as fdr
 import requests
 import yfinance as yf
 from bs4 import BeautifulSoup
@@ -408,14 +409,27 @@ _MAJOR_STOCKS = [
 
 
 def fetch_market_brief(brief_type: str) -> dict:
-    """brief_type: morning / midday / closing. 네이버 금융 크롤링 + yfinance 기반 브리핑 데이터 수집."""
+    """brief_type: morning / midday / closing. FinanceDataReader + yfinance 기반 브리핑 데이터 수집."""
     data: dict = {"brief_type": brief_type, "time": datetime.now(KST)}
 
-    # 한국 지수 (네이버 금융 크롤링)
-    for naver_code, key in [("KOSPI", "kospi"), ("KOSDAQ", "kosdaq"), ("KPI200", "kospi200")]:
-        d = _fetch_naver_index(naver_code)
-        if d:
-            data[key] = d
+    # 한국 지수 (FinanceDataReader — 실시간에 가까운 정확한 값)
+    _start = (datetime.now(KST) - timedelta(days=5)).strftime("%Y-%m-%d")
+    for fdr_code, key in [("KS11", "kospi"), ("KQ11", "kosdaq"), ("KS200", "kospi200")]:
+        try:
+            df = fdr.DataReader(fdr_code, _start)
+            if len(df) >= 2:
+                price = float(df["Close"].iloc[-1])
+                prev  = float(df["Close"].iloc[-2])
+                data[key] = {
+                    "price": price,
+                    "change": price - prev,
+                    "change_pct": (price - prev) / prev * 100,
+                }
+            elif len(df) == 1:
+                price = float(df["Close"].iloc[-1])
+                data[key] = {"price": price, "change": 0.0, "change_pct": 0.0}
+        except Exception as e:
+            log.warning("FDR %s 조회 실패: %s", fdr_code, e)
 
     # 미국 지수 (yfinance)
     for symbol, key in [("^IXIC", "nasdaq"), ("^GSPC", "sp500"), ("^DJI", "dow")]:
@@ -428,11 +442,12 @@ def fetch_market_brief(brief_type: str) -> dict:
         except Exception as e:
             log.warning("%s 조회 실패: %s", symbol, e)
 
-    # 코스피200 야간선물 (morning, 네이버 금융 크롤링)
+    # 코스피200 야간선물 (morning, Investing.com curl_cffi)
     if brief_type == "morning":
-        d = _fetch_naver_index("KOSPI200F")
-        if d:
-            data["futures"] = d
+        try:
+            data["futures"] = fetch_kospi200_futures()
+        except Exception as e:
+            log.warning("야간선물 조회 실패: %s", e)
 
     # 주요 종목 현황 (midday에서 사용)
     if brief_type == "midday":
