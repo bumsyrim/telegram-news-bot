@@ -553,8 +553,10 @@ def format_market_brief(data: dict, brief_type: str, news_headlines: list = None
     date_str = now.strftime("%Y-%m-%d")
     now_str = now.strftime("%Y-%m-%d %H:%M")
 
+    news_title = "최신 시황 뉴스" if now_mode else "오늘 시황 뉴스"
+
     def _news_section():
-        lines = ["", SEP, "오늘 시황 뉴스", SEP]
+        lines = ["", SEP, news_title, SEP]
         if news_headlines:
             lines += [f"- {h}" for h in news_headlines]
         else:
@@ -573,11 +575,14 @@ def format_market_brief(data: dict, brief_type: str, news_headlines: list = None
     lines = []
 
     if brief_type == "morning":
+        header = f"📊 실시간 시장 현황 [{now_str} KST]" if now_mode else f"📊 장 시작 전 브리핑 [{date_str} 08:30 KST]"
+        kospi_label = "코스피 현황" if now_mode else "전일 코스피"
+        us_label = "미국 시장" if now_mode else "간밤 미국 시장"
         lines += [
-            f"📊 장 시작 전 브리핑 [{now_str if now_mode else date_str + ' 08:30'} KST]",
+            header,
             "",
             SEP,
-            "전일 코스피",
+            kospi_label,
             SEP,
             _idx("kospi",  "코스피 "),
             _idx("kosdaq", "코스닥 "),
@@ -603,25 +608,29 @@ def format_market_brief(data: dict, brief_type: str, news_headlines: list = None
         lines += [
             "",
             SEP,
-            "간밤 미국 시장",
+            us_label,
             SEP,
             _idx("nasdaq", "나스닥  ", 0),
             _idx("sp500",  "S&P500  ", 0),
             _idx("dow",    "다우존스", 0),
         ]
         lines += _news_section()
-        lines += [
-            "",
-            "⏰ 장 시작: 09:00 KST",
-            "다음 리포트: 12:00 (장 중간)",
-        ]
+        if not now_mode:
+            lines += [
+                "",
+                "⏰ 장 시작: 09:00 KST",
+                "다음 리포트: 12:00 (장 중간)",
+            ]
 
     elif brief_type == "midday":
+        header = f"📊 실시간 시장 현황 [{now_str} KST]" if now_mode else f"📊 장 중간 현황 [{date_str} 12:00 KST]"
+        idx_label = "현재 지수 (조회 시점)" if now_mode else "현재 지수"
+        major_label = "주요 종목 (조회 시점)" if now_mode else "주요 종목"
         lines += [
-            f"📊 장 중간 현황 [{now_str if now_mode else date_str + ' 12:00'} KST]",
+            header,
             "",
             SEP,
-            "현재 지수",
+            idx_label,
             SEP,
             _idx("kospi",   "코스피  "),
             _idx("kosdaq",  "코스닥  "),
@@ -629,46 +638,49 @@ def format_market_brief(data: dict, brief_type: str, news_headlines: list = None
         ]
         major = data.get("major_stocks", [])
         if major:
-            lines += ["", SEP, "주요 종목", SEP]
+            lines += ["", SEP, major_label, SEP]
             for s in major:
                 pct = s["change_pct"]
                 sign = "+" if pct >= 0 else ""
                 arrow = "▲" if pct >= 0 else "▼"
                 lines.append(f"{s['name']}: {s['price']:,.0f}원 {arrow} {sign}{pct:.2f}%")
         lines += _news_section()
-        lines += [
-            "",
-            "⏰ 다음 리포트: 15:30 (장 마감)",
-        ]
+        if not now_mode:
+            lines += [
+                "",
+                "⏰ 다음 리포트: 15:30 (장 마감)",
+            ]
 
     else:  # closing
+        header = f"📊 실시간 시장 현황 [{now_str} KST]" if now_mode else f"📊 장 마감 리포트 [{date_str} 15:30 KST]"
+        idx_label = "현재 지수 (조회 시점)" if now_mode else "최종 지수"
+        major_label = "주요 종목 (조회 시점)" if now_mode else "시총 상위 5개 종목"
+        feature_label = "오늘 특징 (조회 시점)" if now_mode else "오늘 특징"
         lines += [
-            f"📊 장 마감 리포트 [{now_str if now_mode else date_str + ' 15:30'} KST]",
+            header,
             "",
             SEP,
-            "최종 지수",
+            idx_label,
             SEP,
             _idx("kospi",    "코스피   "),
             _idx("kosdaq",   "코스닥   "),
             _idx("kospi200", "코스피200"),
         ]
 
-        # 시총 상위 5개 종목
         major = data.get("major_stocks", [])
         if major:
-            lines += ["", SEP, "시총 상위 5개 종목", SEP]
+            lines += ["", SEP, major_label, SEP]
             for s in major:
                 pct = s["change_pct"]
                 sign = "+" if pct >= 0 else ""
                 arrow = "▲" if pct >= 0 else "▼"
                 lines.append(f"{s['name']}: {s['price']:,.0f}원 {arrow} {sign}{pct:.2f}%")
 
-        # 오늘 특징 (상승/하락 종목 수 + 수급)
         adv = data.get("advancing")
         dec = data.get("declining")
         supply = data.get("supply", {})
         if adv is not None or supply:
-            lines += ["", SEP, "오늘 특징", SEP]
+            lines += ["", SEP, feature_label, SEP]
             if adv is not None and dec is not None:
                 lines.append(f"상승 종목: {adv:,}개 / 하락 종목: {dec:,}개")
             for label, key in [("외국인", "외국인"), ("기관  ", "기관"), ("개인  ", "개인")]:
@@ -680,7 +692,8 @@ def format_market_brief(data: dict, brief_type: str, news_headlines: list = None
                     lines.append(f"{label}: {sign}{val_억:,.0f}억 ({direction})")
 
         lines += _news_section()
-        lines += ["", "⏰ 다음 리포트: 내일 08:30 (장 시작 전)"]
+        if not now_mode:
+            lines += ["", "⏰ 다음 리포트: 내일 08:30 (장 시작 전)"]
 
     return "\n".join(lines)
 
