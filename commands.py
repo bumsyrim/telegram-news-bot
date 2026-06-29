@@ -33,54 +33,33 @@ PUBLIC_COMMANDS = {
 
 log = logging.getLogger(__name__)
 
-_STOCK_HELP = (
-    "\n[📈 종목 검색/구독]\n"
-    "/종목 종목명       - 종목 검색\n"
-    "/종목 등록 종목명  - 구독 등록\n"
-    "/종목 해제 종목명  - 구독 해제\n"
-    "/종목 목록         - 내 구독 종목 확인\n"
-    "/종목 설정 종목명  - 알림 설정\n"
-    "/종목 조회 종목명  - 즉시 뉴스 조회\n\n"
-    "💡 실시간 검색:\n"
-    "@ptw_aiwkeekly_bot 종목명 입력\n"
-    "→ 탭으로 선택 후 버튼으로 동작 선택"
-)
-
-_BRIEF_HELP = (
-    "\n[📊 시장 브리핑]\n"
-    "/브리핑 now     - 현재 시점 시장 브리핑\n"
-    "/브리핑 morning - 장 시작 전 브리핑\n"
-    "/브리핑 midday  - 장 중간 브리핑\n"
-    "/브리핑 closing - 장 마감 브리핑"
-)
-
 _COMMON_HELP = (
     "[📋 공통 명령어]\n"
     "/start - 뉴스 구독 등록\n"
     "/stop - 뉴스 구독 취소\n"
-    "/list - 등록된 사이트 목록\n"
     "/날씨 - 내 위치 기준 날씨 조회\n"
     "/location 위치명 - 날씨 위치 변경\n"
     "/코스피 - 코스피 지수 조회\n"
     "/금융 - 미국 시장 지표 조회\n"
+    "/help - 도움말\n"
+    "\n"
+    "[📈 종목 검색/구독]\n"
+    "/종목 종목명 - 종목 검색\n"
+    "/종목 등록 종목명 - 구독 등록\n"
+    "/종목 해제 종목명 - 구독 해제\n"
+    "/종목 목록 - 내 구독 종목 확인\n"
+    "/종목 설정 종목명 - 알림 설정\n"
+    "/종목 조회 종목명 - 즉시 뉴스 조회\n"
+    "💡 실시간 검색: @ptw_aiwkeekly_bot 종목명 입력\n"
+    "\n"
+    "[📊 시장 브리핑]\n"
     "/브리핑 now - 현재 시점 시장 브리핑\n"
-    "/종목 - 종목 검색/구독\n"
-    "/help - 도움말"
-) + _STOCK_HELP + _BRIEF_HELP
+    "/브리핑 morning - 장 시작 전 브리핑\n"
+    "/브리핑 midday - 장 중간 브리핑\n"
+    "/브리핑 closing - 장 마감 브리핑"
+)
 
-HELP_TEXT = (
-    "[📋 사용 가능한 명령어]\n"
-    "/start - 뉴스 구독 등록\n"
-    "/stop - 뉴스 구독 취소\n"
-    "/list - 등록된 사이트 목록\n"
-    "/날씨 - 내 위치 기준 날씨 조회\n"
-    "/location 위치명 - 날씨 위치 변경\n"
-    "/코스피 - 코스피 지수 조회\n"
-    "/금융 - 미국 시장 지표 조회\n"
-    "/브리핑 now - 현재 시점 시장 브리핑\n"
-    "/종목 - 종목 검색/구독\n"
-    "/help - 도움말"
-) + _STOCK_HELP + _BRIEF_HELP
+HELP_TEXT = _COMMON_HELP
 
 ADMIN_HELP_TEXT = (
     "[👑 관리자 명령어]\n"
@@ -94,7 +73,7 @@ ADMIN_HELP_TEXT = (
     "/promote chat_id - 관리자 추가\n"
     "/demote chat_id - 관리자 권한 제거\n"
     "\n"
-) + _COMMON_HELP + _BRIEF_HELP
+) + _COMMON_HELP
 
 
 # ── 관리자 목록 읽기/쓰기 (.env ADMIN_IDS) ───────────────
