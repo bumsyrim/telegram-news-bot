@@ -544,13 +544,14 @@ def _fetch_market_news() -> list:
         return []
 
 
-def format_market_brief(data: dict, brief_type: str, news_headlines: list = None) -> str:
+def format_market_brief(data: dict, brief_type: str, news_headlines: list = None, now_mode: bool = False) -> str:
     """브리핑 데이터를 텔레그램 메시지 문자열로 포맷."""
     if news_headlines is None:
         news_headlines = []
     SEP = "──────────────────"
     now: datetime = data.get("time", datetime.now(KST))
     date_str = now.strftime("%Y-%m-%d")
+    now_str = now.strftime("%Y-%m-%d %H:%M")
 
     def _news_section():
         lines = ["", SEP, "오늘 시황 뉴스", SEP]
@@ -573,7 +574,7 @@ def format_market_brief(data: dict, brief_type: str, news_headlines: list = None
 
     if brief_type == "morning":
         lines += [
-            f"📊 장 시작 전 브리핑 [{date_str} 08:30 KST]",
+            f"📊 장 시작 전 브리핑 [{now_str if now_mode else date_str + ' 08:30'} KST]",
             "",
             SEP,
             "전일 코스피",
@@ -617,7 +618,7 @@ def format_market_brief(data: dict, brief_type: str, news_headlines: list = None
 
     elif brief_type == "midday":
         lines += [
-            f"📊 장 중간 현황 [{date_str} 12:00 KST]",
+            f"📊 장 중간 현황 [{now_str if now_mode else date_str + ' 12:00'} KST]",
             "",
             SEP,
             "현재 지수",
@@ -642,7 +643,7 @@ def format_market_brief(data: dict, brief_type: str, news_headlines: list = None
 
     else:  # closing
         lines += [
-            f"📊 장 마감 리포트 [{date_str} 15:30 KST]",
+            f"📊 장 마감 리포트 [{now_str if now_mode else date_str + ' 15:30'} KST]",
             "",
             SEP,
             "최종 지수",

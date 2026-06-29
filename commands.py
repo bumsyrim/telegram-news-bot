@@ -331,7 +331,7 @@ def handle_brief_cmd(chat_id: int, args: str):
     try:
         data = fetch_market_brief(brief_type)
         news = _fetch_market_news()
-        msg = format_market_brief(data, brief_type, news)
+        msg = format_market_brief(data, brief_type, news, now_mode=(arg == "now"))
         send_message(chat_id, msg)
     except Exception as e:
         log.error("브리핑 조회 실패: %s", e, exc_info=True)
