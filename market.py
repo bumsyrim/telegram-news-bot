@@ -120,7 +120,11 @@ def fetch_kospi200_futures() -> dict:
 
     curl_cffi로 Chrome TLS 지문 흉내 → Cloudflare 우회.
     Selenium headless는 Cloudflare JS 챌린지에서 Chrome 크래시 발생.
+    캐시 없음 — 호출마다 매번 새로 요청.
     """
+    _start_time = datetime.now(KST)
+    log.info("[야간선물] 크롤링 시작: %s", _start_time.strftime("%Y-%m-%d %H:%M:%S KST"))
+
     resp = cffi_req.get(
         FUTURES_URL,
         impersonate="chrome124",
@@ -133,8 +137,9 @@ def fetch_kospi200_futures() -> dict:
     )
     resp.raise_for_status()
 
+    _elapsed = (datetime.now(KST) - _start_time).total_seconds()
     soup = BeautifulSoup(resp.text, "lxml")
-    log.info("Investing.com 응답 수신 (상태: %s)", resp.status_code)
+    log.info("[야간선물] Investing.com 응답 수신 (상태: %s, 소요: %.2fs)", resp.status_code, _elapsed)
 
     # ── 현재가: 여러 셀렉터 순서대로 시도 ──
     PRICE_SELECTORS = [
@@ -206,7 +211,7 @@ def fetch_kospi200_futures() -> dict:
                     if val is not None:
                         extras[key] = val
 
-    log.info("코스피200 야간선물: price=%.2f pct=%.2f extras=%s", price, change_pct, extras)
+    log.info("[야간선물] 파싱 완료: price=%.2f pct=%.2f extras=%s", price, change_pct, extras)
     return {
         "price": price,
         "change_pct": change_pct,
@@ -520,24 +525,41 @@ def _fetch_market_news() -> list:
         )
         resp.raise_for_status()
 
-        headlines = []
-        for item in resp.json().get("items", []):
-            # pubDate 예: "Wed, 25 Jun 2026 09:30:00 +0900"
-            pub = item.get("pubDate", "")
-            try:
-                from datetime import datetime as _dt
-                pub_dt = _dt.strptime(pub, "%a, %d %b %Y %H:%M:%S %z")
-                if pub_dt.strftime("%Y%m%d") != today:
-                    continue
-            except Exception:
-                pass  # 날짜 파싱 실패 시 포함
+        items = resp.json().get("items", [])
+        headlines = []       # 오늘 기사
+        fallback_headlines = []  # 최신 기사 (오늘 이외) — 부족 시 보완용
+
+        from datetime import datetime as _dt
+        for item in items:
             title = _BS(item.get("title", ""), "lxml").get_text()
-            if title:
-                headlines.append(title)
+            if not title:
+                continue
+
+            pub = item.get("pubDate", "")
+            is_today = True  # 날짜 파싱 실패 시 오늘 기사로 간주
+            try:
+                pub_dt = _dt.strptime(pub, "%a, %d %b %Y %H:%M:%S %z")
+                is_today = pub_dt.strftime("%Y%m%d") == today
+            except Exception:
+                pass
+
+            if is_today:
+                if len(headlines) < 3:
+                    headlines.append(title)
+            elif len(fallback_headlines) < 3:
+                fallback_headlines.append(title)
+
+        today_count = len(headlines)
+
+        # 오늘 기사가 3건 미만이면 최신 기사로 보완
+        for t in fallback_headlines:
             if len(headlines) >= 3:
                 break
+            if t not in headlines:
+                headlines.append(t)
 
-        log.info("시황 뉴스 API: %d건 수집", len(headlines))
+        log.info("시황 뉴스 API: 오늘 %d건, 보완 %d건 (총 %d건)",
+                 today_count, len(headlines) - today_count, len(headlines))
         return headlines
     except Exception as e:
         log.warning("시황 뉴스 API 실패: %s", e)
