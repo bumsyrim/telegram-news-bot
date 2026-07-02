@@ -13,7 +13,7 @@ import requests
 log = logging.getLogger(__name__)
 
 KST = timezone(timedelta(hours=9))
-USERS_FILE = Path("users.json")
+USERS_FILE = Path(__file__).resolve().parent / "users.json"
 SOURCES_FILE = Path("sources.json")
 
 GRADE_EMOJI = {

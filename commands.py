@@ -22,7 +22,7 @@ import stock_subscription
 
 SOURCES_FILE = Path("sources.json")
 WORKFLOW_FILE = Path(".github/workflows/run_bot.yml")
-USERS_FILE = Path("users.json")
+USERS_FILE = Path(__file__).resolve().parent / "users.json"
 ENV_FILE = Path(".env")
 
 # 누구나 사용 가능한 명령어 (NFC 정규화된 소문자로 저장)

@@ -35,7 +35,7 @@ from config import (
 
 SEEN_FILE = Path("seen.json")
 SOURCES_FILE = Path("sources.json")
-USERS_FILE = Path("users.json")
+USERS_FILE = Path(__file__).resolve().parent / "users.json"
 
 
 # ── sources.json 로드 ──────────────────────────────────

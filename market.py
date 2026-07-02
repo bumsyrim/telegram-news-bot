@@ -18,7 +18,7 @@ from curl_cffi import requests as cffi_req
 log = logging.getLogger(__name__)
 
 KST = timezone(timedelta(hours=9))
-USERS_FILE = Path("users.json")
+USERS_FILE = Path(__file__).resolve().parent / "users.json"
 
 FUTURES_URL = "https://kr.investing.com/indices/korea-200-futures"
 
