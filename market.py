@@ -5,6 +5,7 @@
 import argparse
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -20,6 +21,16 @@ KST = timezone(timedelta(hours=9))
 USERS_FILE = Path("users.json")
 
 FUTURES_URL = "https://kr.investing.com/indices/korea-200-futures"
+
+# Investing.com 페이지에 내장된 실시간 가격 상태 JSON에서 신선도 필드 추출.
+# "isDelayed"와 "lastUpdateTime"이 같은 price 객체 안에 있음 — 만기 롤오버가
+# 깨지면 이 값이 갱신되지 않고 며칠씩 얼어붙는 것이 확인됨 (pair_id 8987 사례).
+_FRESHNESS_RE = re.compile(
+    r'"shortName":"KOSPI 200"\},"price":\{.*?"isDelayed":(?P<delayed>true|false)'
+    r'.*?"lastUpdateTime":"(?P<ts>\d+)"',
+    re.DOTALL,
+)
+_STALE_THRESHOLD = timedelta(hours=3)
 
 # (야후 파이낸스 티커, 표시 이름, 종류)
 TICKERS = [
@@ -212,6 +223,25 @@ def fetch_kospi200_futures() -> dict:
                         extras[key] = val
 
     log.info("[야간선물] 파싱 완료: price=%.2f pct=%.2f extras=%s", price, change_pct, extras)
+
+    # ── 신선도 검증: Investing.com 백엔드 자체가 시세를 얼려둔 경우 차단 ──
+    # (만기 롤오버 실패 등으로 pair_id가 며칠째 갱신 안 되는 사례 확인됨)
+    freshness = _FRESHNESS_RE.search(resp.text)
+    if freshness:
+        is_delayed = freshness.group("delayed") == "true"
+        last_update = datetime.fromtimestamp(int(freshness.group("ts")) / 1000, tz=KST)
+        staleness = datetime.now(KST) - last_update
+        log.info(
+            "[야간선물] 신선도: isDelayed=%s, 마지막 갱신=%s KST (%.1f시간 전)",
+            is_delayed, last_update.strftime("%Y-%m-%d %H:%M:%S"), staleness.total_seconds() / 3600,
+        )
+        if staleness >= _STALE_THRESHOLD:
+            raise ValueError(
+                f"야간선물 데이터가 오래됨: 마지막 갱신 {last_update.strftime('%Y-%m-%d %H:%M')} KST"
+            )
+    else:
+        log.warning("[야간선물] 신선도 정보를 페이지에서 찾을 수 없음 - 검증 생략")
+
     return {
         "price": price,
         "change_pct": change_pct,
@@ -247,10 +277,11 @@ def fetch_market_data() -> tuple[list, Exception | None]:
         except Exception as e:
             log.error("조회 실패 (%s): %s", symbol, e)
 
-    # 코스피200 야간선물 (Investing.com 크롤링)
+    # 코스피200 야간선물 (Investing.com 크롤링, 신선도 검증 포함)
     futures_error = None
     try:
         futures = fetch_kospi200_futures()
+        log.info("코스피200 야간선물 정상: %.2f (%.2f%%)", futures["price"], futures["change_pct"])
         results.append({
             "label": "코스피200 야간선물",
             "kind": "futures_kr",
@@ -259,6 +290,11 @@ def fetch_market_data() -> tuple[list, Exception | None]:
     except Exception as e:
         log.error("코스피200 야간선물 조회 실패: %s", e, exc_info=True)
         futures_error = e
+        results.append({
+            "label": "코스피200 야간선물",
+            "kind": "futures_kr",
+            "unavailable": True,
+        })
 
     return results, futures_error
 
@@ -272,6 +308,11 @@ def format_market_message(data: list) -> str:
 
     for item in data:
         label = item["label"]
+
+        if item.get("unavailable"):
+            lines.append(f"- {label}: 데이터 확인 불가")
+            continue
+
         price = item["price"]
         pct = item["change_pct"]
         arrow = "▲" if pct >= 0 else "▼"
@@ -337,9 +378,9 @@ def send_market_report():
     subscribers = _load_subscribers(TELEGRAM_CHAT_ID)
     api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
-    # 야간선물 오류 시 별도 알림 발송 (나머지는 계속 진행)
+    # 야간선물 신선도 검증 실패 시 본문에 "데이터 확인 불가"로 표시 (fetch_market_data에서 처리)
     if futures_error:
-        _broadcast(api_url, subscribers, "⚠️ [금융] 야간선물 데이터 오류\n코스피200 야간선물 정보를 가져올 수 없습니다.")
+        log.warning("야간선물 데이터 확인 불가 - 본문에 안내 표시: %s", futures_error)
 
     if not data:
         log.error("시장 데이터 전체 조회 실패, 발송 중단")
@@ -447,12 +488,14 @@ def fetch_market_brief(brief_type: str) -> dict:
         except Exception as e:
             log.warning("%s 조회 실패: %s", symbol, e)
 
-    # 코스피200 야간선물 (morning, Investing.com curl_cffi)
+    # 코스피200 야간선물 (morning, Investing.com curl_cffi, 신선도 검증 포함)
     if brief_type == "morning":
         try:
             data["futures"] = fetch_kospi200_futures()
+            log.info("야간선물 정상: %.2f (%.2f%%)", data["futures"]["price"], data["futures"]["change_pct"])
         except Exception as e:
-            log.warning("야간선물 조회 실패: %s", e)
+            log.warning("야간선물 발송 보류: %s", e)
+            data["futures"] = None
 
     # 주요 종목 현황 (midday + closing에서 사용)
     if brief_type in ("midday", "closing"):
@@ -615,18 +658,18 @@ def format_market_brief(data: dict, brief_type: str, news_headlines: list = None
             sign = "+" if fp >= 0 else ""
             arrow = "▲" if fp >= 0 else "▼"
             lines.append(f"야간선물: {fv:,.2f} {arrow} {sign}{fp:.2f}%")
-        # 출발 전망 힌트 (야간선물 또는 미국 시장 기반)
-        ref_pct = data.get("futures", {}).get("change_pct") or data.get("nasdaq", {}).get("change_pct")
-        if ref_pct is not None:
-            if ref_pct >= 0.5:
+            # 출발 전망 힌트 (야간선물 데이터가 있을 때만 표시)
+            if fp >= 0.5:
                 hint = "→ 강보합 이상 출발 예상"
-            elif ref_pct >= 0:
+            elif fp >= 0:
                 hint = "→ 강보합 출발 예상"
-            elif ref_pct >= -0.5:
+            elif fp >= -0.5:
                 hint = "→ 약보합 출발 예상"
             else:
                 hint = "→ 약세 출발 예상"
             lines.append(hint)
+        else:
+            lines.append("야간선물: 데이터 확인 불가 (잠시 후 재시도)")
         lines += [
             "",
             SEP,
